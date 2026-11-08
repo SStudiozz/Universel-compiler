@@ -1,0 +1,88 @@
+name: Build Android APK
+
+on:
+  push:
+    paths:
+      - 'on-device-llm-1.3.7-persistent-memory-dev-flat.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Extract project and build ARM64 APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository containing the ZIP
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Extract Flutter project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive='on-device-llm-1.3.7-persistent-memory-dev-flat.zip'
+          test -f "$archive" || { echo "Missing project archive: $archive"; exit 1; }
+          mkdir -p project
+          unzip -q "$archive" -d project
+          test -f project/pubspec.yaml || { echo 'pubspec.yaml was not found at the extracted project root.'; exit 1; }
+          test -f project/scripts/build_android.sh || { echo 'scripts/build_android.sh is missing.'; exit 1; }
+          echo 'Project archive extracted successfully.'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+          cache-key: flutter-3.47.5-${{ runner.os }}
+
+      - name: Build release APK
+        working-directory: project
+        shell: bash
+        run: bash scripts/build_android.sh
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="project/build/app/outputs/flutter-apk/app-release.apk"
+          test -s "$apk"
+          echo "APK size:"
+          stat -c '%s bytes' "$apk"
+          echo "Checking ZIP integrity and CRC..."
+          unzip -tq "$apk"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$sdk_root"
+          build_tools="$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -n "$build_tools"
+          echo "Checking APK alignment..."
+          "$build_tools/zipalign" -c -v 4 "$apk"
+          echo "Checking APK signature..."
+          "$build_tools/apksigner" verify --verbose --print-certs "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          echo "All APK checks passed."
+
+      - name: Upload Android APK backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: on-device-llm-android-arm64-release
+          path: |
+            project/build/app/outputs/flutter-apk/app-release.apk
+            project/build/app/outputs/flutter-apk/app-release.apk.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
