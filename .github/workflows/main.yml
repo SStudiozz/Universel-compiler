@@ -60,7 +60,7 @@ jobs:
 
           tool_file = Path('lib/features/tools/tool_runner.dart')
           tool_source = tool_file.read_text()
-          old_regex = r"RegExp('(?:^|[^\\\\w])${RegExp.escape(tool.name)}(?:[^\\\\w]|$)')"
+          old_regex = r"RegExp('(?:^|[^\\w])${RegExp.escape(tool.name)}(?:[^\\w]|$)')"
           new_regex = r"RegExp(r'(?:^|[^\\w])' + RegExp.escape(tool.name) + r'(?:[^\\w]|$)')"
           if tool_source.count(old_regex) != 1:
               raise SystemExit('Expected exactly one broken tool-name RegExp; source differs, refusing unsafe patch.')
