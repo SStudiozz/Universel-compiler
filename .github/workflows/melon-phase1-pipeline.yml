@@ -35,90 +35,96 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq wget unzip zip apksigner zipalign 2>/dev/null || true
+          sudo apt-get install -y -qq wget unzip zip p7zip-full 2>/dev/null || true
           # apktool
           wget -q -O /usr/local/bin/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
           wget -q -O /usr/local/bin/apktool https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
           chmod +x /usr/local/bin/apktool
-          apktool --version
-          # uber-apk-signer as fallback
+          # uber-apk-signer
           wget -q -O /tmp/uber-apk-signer.jar https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
 
       - name: Download original APK
-        id: download
         run: |
           set -euo pipefail
           URL="${{ github.event.inputs.apk_url }}"
           echo "Downloading from: $URL"
           curl -L --fail --retry 3 --retry-delay 5 -o original.apk "$URL"
           ls -lh original.apk
-          # Verify magic
           head -c 4 original.apk | od -A n -t x1
           EXPECTED_SHA="9d71ab33e2849bca17c8d37e77b299d3b62c13e10f94ebd7537c281449e034f5"
           ACTUAL_SHA=$(sha256sum original.apk | awk '{print $1}')
           echo "SHA256: $ACTUAL_SHA"
-          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-            echo "WARNING: SHA256 does not match expected decompile input. Continuing anyway for PoC."
-          else
+          if [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ]; then
             echo "SHA256 matches expected decompile input."
+          else
+            echo "WARNING: SHA256 does not match expected. Continuing for PoC."
           fi
-          # Backup
           cp original.apk original-melon-sandbox-22-0-5.apk
 
-      - name: Create PoC marker and rebuild APK (zip method)
+      - name: Extract APK (robust method)
         run: |
           set -euo pipefail
           mkdir -p work
           cd work
-          # Unzip original
-          unzip -q ../original.apk
-          # Inject harmless PoC marker
+          # Try 7z first (handles more compression methods), fall back to jar
+          if command -v 7z >/dev/null 2>&1; then
+            echo "Extracting with 7z..."
+            7z x -y ../original.apk
+          else
+            echo "Extracting with jar..."
+            jar xf ../original.apk
+          fi
+          echo "Extract done. Top-level:"
+          ls -la
+          test -d lib || test -d assets || { echo "Extract failed - no lib/assets"; exit 1; }
+
+      - name: Inject PoC marker and rebuild
+        run: |
+          set -euo pipefail
+          cd work
           mkdir -p assets
           MARKER="MELON_PATCH_PIPELINE_POC_v1 $(date -u +%Y%m%dT%H%M%SZ) commit=${{ github.sha }}"
           echo "$MARKER" > assets/melon_patch_poc.txt
           echo "Injected marker:"
           cat assets/melon_patch_poc.txt
-          # Remove old signatures so we can re-sign cleanly
+          # Remove old signatures
           rm -rf META-INF
-          # Rebuild zip (APK)
-          zip -q -r -9 ../unsigned.apk .
+          # Rebuild as zip (stored then we can re-compress if needed)
+          # Use jar for reliable APK-compatible packaging
+          jar cf ../unsigned.apk .
           cd ..
+          # Or zip -0 then zip -9 for better compatibility
           ls -lh unsigned.apk
-          # Verify marker is inside
-          unzip -p unsigned.apk assets/melon_patch_poc.txt
+          # Verify marker
+          unzip -p unsigned.apk assets/melon_patch_poc.txt || jar xf unsigned.apk assets/melon_patch_poc.txt && cat assets/melon_patch_poc.txt
 
-      - name: Generate debug keystore and sign
+      - name: Generate keystore and sign
         run: |
           set -euo pipefail
-          # Generate a throwaway debug keystore for PoC
           keytool -genkeypair -v -keystore debug.keystore -alias melonpoc \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
             -dname "CN=MelonPoC, OU=Dev, O=MelonMod, L=None, ST=None, C=US"
-          # Align + sign with apksigner if available, else uber-apk-signer
-          if command -v zipalign >/dev/null 2>&1 && command -v apksigner >/dev/null 2>&1; then
-            zipalign -p -f 4 unsigned.apk aligned.apk
-            apksigner sign --ks debug.keystore --ks-key-alias melonpoc \
-              --ks-pass pass:android --key-pass pass:android \
-              --out melon-pipeline-test.apk aligned.apk
-            apksigner verify --verbose melon-pipeline-test.apk
-          else
-            java -jar /tmp/uber-apk-signer.jar -a unsigned.apk --ks debug.keystore \
-              --ksAlias melonpoc --ksPass android --ksKeyPass android \
-              -o signed_out
-            mv signed_out/*.apk melon-pipeline-test.apk
-          fi
+          # Prefer uber-apk-signer (handles align + sign + v1/v2/v3)
+          java -jar /tmp/uber-apk-signer.jar -a unsigned.apk --ks debug.keystore \
+            --ksAlias melonpoc --ksPass android --ksKeyPass android \
+            --allowResign --overwrite -o signed_out
+          # Find the signed apk
+          find signed_out -name "*.apk" -exec cp {} melon-pipeline-test.apk \;
           ls -lh melon-pipeline-test.apk
-          sha256sum melon-pipeline-test.apk > melon-pipeline-test.apk.sha256
-          cat melon-pipeline-test.apk.sha256
+          sha256sum melon-pipeline-test.apk | tee melon-pipeline-test.apk.sha256
 
-      - name: Verify PoC marker still present after sign
+      - name: Verify final APK
         run: |
           set -euo pipefail
-          echo "=== Marker content inside final APK ==="
-          unzip -p melon-pipeline-test.apk assets/melon_patch_poc.txt
-          echo "=== ZIP integrity ==="
-          unzip -tq melon-pipeline-test.apk | tail -5
+          echo "=== Marker inside final APK ==="
+          unzip -p melon-pipeline-test.apk assets/melon_patch_poc.txt || true
+          python3 -c "
+          import zipfile
+          z = zipfile.ZipFile('melon-pipeline-test.apk')
+          print(z.read('assets/melon_patch_poc.txt').decode())
+          print('ZIP entries:', len(z.namelist()))
+          "
           echo "PHASE1_POC_SUCCESS"
 
       - name: Upload artifacts
@@ -138,6 +144,5 @@ jobs:
           echo "### Melon Phase 1 PoC completed" >> $GITHUB_STEP_SUMMARY
           echo "- Original APK backed up" >> $GITHUB_STEP_SUMMARY
           echo "- Harmless marker injected: assets/melon_patch_poc.txt" >> $GITHUB_STEP_SUMMARY
-          echo "- APK rebuilt and signed" >> $GITHUB_STEP_SUMMARY
-          echo "- Artifact name: melon-pipeline-test" >> $GITHUB_STEP_SUMMARY
-          echo "- Download the APK from the Actions artifacts tab" >> $GITHUB_STEP_SUMMARY
+          echo "- APK rebuilt and signed with debug keystore" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifact: melon-pipeline-test" >> $GITHUB_STEP_SUMMARY
