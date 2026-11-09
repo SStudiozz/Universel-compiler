@@ -9,7 +9,7 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   decompile:
@@ -134,6 +134,16 @@ jobs:
             echo "Cpp2IL and Il2CppDumper output is reconstructed metadata/IL, not the original Unity project or guaranteed original C# source."
           } > output/README.txt
           tar -czf melon-playground-decompile.tar.gz output
+
+      - name: Publish decompilation archive to the existing public release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s melon-playground-decompile.tar.gz
+          gh release upload Melon melon-playground-decompile.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Upload decompilation artifact
         if: always()
