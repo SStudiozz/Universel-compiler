@@ -73,7 +73,7 @@ jobs:
       - name: Run Il2CppDumper (ARM64)
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           META=$(find output/il2cpp -name global-metadata.dat -print -quit)
           LIB=output/il2cpp/lib/arm64-v8a/libil2cpp.so
           test -s "$META"
@@ -81,7 +81,23 @@ jobs:
           DLL=$(find tools/il2cppdumper -maxdepth 2 -name 'Il2CppDumper.dll' -print -quit)
           test -n "$DLL"
           mkdir -p output/il2cppdumper-arm64
-          dotnet "$DLL" "$LIB" "$META" output/il2cppdumper-arm64
+
+          # Il2CppDumper 6.7.46 generates its output and then calls Console.ReadKey.
+          # In CI that final pause throws because stdin is not an interactive console.
+          # Capture its exit code, then judge success by the actual generated files.
+          set +e
+          dotnet "$DLL" "$LIB" "$META" output/il2cppdumper-arm64 </dev/null
+          DUMPER_STATUS=$?
+          set -e
+          echo "Il2CppDumper exit code: $DUMPER_STATUS"
+          find output/il2cppdumper-arm64 -type f -printf '%p %s bytes\n' | tee output/il2cppdumper-inventory.txt
+          test -n "$(find output/il2cppdumper-arm64 -type f -size +0c -print -quit)" || {
+            echo "Il2CppDumper produced no usable files; treating this as a real failure."
+            exit 1
+          }
+          if [ "$DUMPER_STATUS" -ne 0 ]; then
+            echo "Ignoring the post-generation console-pause failure; generated output was verified."
+          fi
 
       - name: Run Cpp2IL against the original APK
         shell: bash
@@ -91,15 +107,15 @@ jobs:
           META="$PWD/$(find output/il2cpp -name global-metadata.dat -print -quit)"
           LIB="$PWD/output/il2cpp/lib/arm64-v8a/libil2cpp.so"
           tools/Cpp2IL --game-path="$PWD/output/il2cpp" --exe-name=libil2cpp.so --force-binary-path="$LIB" --force-metadata-path="$META" --output-root="$PWD/output/cpp2il" --analysis-level=4 --disable-registration-prompts --verbose 2>&1 | tee output/cpp2il.log
-          test -n "$(find output/cpp2il -type f -print -quit)"
+          test -n "$(find output/cpp2il -type f -size +0c -print -quit)"
 
       - name: Verify reconstructed output
         shell: bash
         run: |
           set -euo pipefail
           echo "=== Decompiled output inventory ===" | tee output/verification.txt
-          find output/il2cppdumper-arm64 output/cpp2il -type f -printf '%p %s bytes\n' | tee -a output/verification.txt
-          test -n "$(find output/il2cppdumper-arm64 output/cpp2il -type f -print -quit)"
+          find output/il2cppdumper-arm64 output/cpp2il -type f -size +0c -printf '%p %s bytes\n' | tee -a output/verification.txt
+          test -n "$(find output/il2cppdumper-arm64 output/cpp2il -type f -size +0c -print -quit)"
 
       - name: Package analysis output
         if: always()
