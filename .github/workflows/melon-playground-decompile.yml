@@ -1,0 +1,111 @@
+name: Melon Playground APK - Decompile
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  decompile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools input output
+          curl -fL https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar -o tools/apktool.jar
+          curl -fL https://github.com/Perfare/Il2CppDumper/releases/latest/download/Il2CppDumper-linux.zip -o tools/Il2CppDumper.zip || true
+          if [ -s tools/Il2CppDumper.zip ]; then unzip -oq tools/Il2CppDumper.zip -d tools/il2cppdumper; fi
+          curl -fL https://github.com/SamboyCoding/Cpp2IL/releases/latest/download/Cpp2IL-linux-x64.zip -o tools/Cpp2IL.zip || true
+          if [ -s tools/Cpp2IL.zip ]; then unzip -oq tools/Cpp2IL.zip -d tools/cpp2il; fi
+
+      - name: Download APK from this repository's latest GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern 'melon-sandbox-22-0-5.apk' --dir input
+          test -s input/melon-sandbox-22-0-5.apk
+
+      - name: Decode APK resources and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar tools/apktool.jar d -f input/melon-sandbox-22-0-5.apk -o output/apktool
+          unzip -l input/melon-sandbox-22-0-5.apk > output/apk-file-list.txt
+          unzip -p input/melon-sandbox-22-0-5.apk AndroidManifest.xml > output/AndroidManifest.binary.xml
+
+      - name: Extract IL2CPP native libraries and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/il2cpp
+          unzip -oq input/melon-sandbox-22-0-5.apk 'lib/*/libil2cpp.so' 'assets/bin/Data/Managed/Metadata/global-metadata.dat' -d output/il2cpp || true
+          find output/il2cpp -type f -print
+          echo "IL2CPP metadata and native libraries are inputs for reconstruction; they are not original C# source."
+
+      - name: Run Il2CppDumper when compatible binaries are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          META=$(find output/il2cpp -name global-metadata.dat -print -quit || true)
+          LIB=$(find output/il2cpp -name libil2cpp.so -print -quit || true)
+          BIN=$(find tools/il2cppdumper -type f -iname 'Il2CppDumper' -print -quit || true)
+          if [ -n "$META" ] && [ -n "$LIB" ] && [ -n "$BIN" ]; then
+            chmod +x "$BIN"
+            mkdir -p output/il2cppdumper
+            "$BIN" "$LIB" "$META" output/il2cppdumper || echo "Il2CppDumper could not process this build; see logs."
+          else
+            echo "Required IL2CPP binary/metadata/tool not found; preserving extracted files."
+          fi
+
+      - name: Run Cpp2IL when compatible binaries are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          META=$(find output/il2cpp -name global-metadata.dat -print -quit || true)
+          LIB=$(find output/il2cpp -name libil2cpp.so -print -quit || true)
+          BIN=$(find tools/cpp2il -type f -iname 'Cpp2IL' -print -quit || true)
+          if [ -n "$META" ] && [ -n "$LIB" ] && [ -n "$BIN" ]; then
+            chmod +x "$BIN"
+            mkdir -p output/cpp2il
+            "$BIN" --game-path "$(dirname "$LIB")" --exe-name libil2cpp.so --output-root output/cpp2il || echo "Cpp2IL could not process this build; see logs."
+          else
+            echo "Required IL2CPP binary/metadata/tool not found; preserving extracted files."
+          fi
+
+      - name: Package analysis output
+        if: always()
+        run: |
+          mkdir -p output
+          {
+            echo "Melon Playground APK analysis"
+            echo "APK: melon-sandbox-22-0-5.apk"
+            echo "Build date: $(date -u +%FT%TZ)"
+            echo "Note: IL2CPP output is reconstructed metadata/pseudocode, not original source."
+          } > output/README.txt
+          tar -czf melon-playground-decompile.tar.gz output
+
+      - name: Upload decompilation artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: melon-playground-decompile
+          path: melon-playground-decompile.tar.gz
+          if-no-files-found: error
+          retention-days: 14
