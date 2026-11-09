@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: 'Direct download URL of melon-sandbox-22-0-5.apk (must be publicly accessible)'
+        description: 'Direct download URL of melon-sandbox-22-0-5.apk'
         required: true
         type: string
         default: 'https://drive.usercontent.google.com/download?id=1yC0Zn9wr_0jRltOHwqYns5jCXP5lDShb&export=download&confirm=t'
@@ -20,7 +20,7 @@ jobs:
   phase1-poc:
     name: Phase 1 - Harmless PoC patch + rebuild + sign
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,12 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq wget unzip zip p7zip-full 2>/dev/null || true
-          # apktool
-          wget -q -O /usr/local/bin/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
-          wget -q -O /usr/local/bin/apktool https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
-          chmod +x /usr/local/bin/apktool
-          # uber-apk-signer
+          sudo apt-get install -y -qq wget unzip zip 2>/dev/null || true
           wget -q -O /tmp/uber-apk-signer.jar https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
 
       - name: Download original APK
@@ -61,71 +56,64 @@ jobs:
           fi
           cp original.apk original-melon-sandbox-22-0-5.apk
 
-      - name: Extract APK (robust method)
+      - name: Inject PoC marker in-place (no full extract)
         run: |
           set -euo pipefail
-          mkdir -p work
-          cd work
-          # Try 7z first (handles more compression methods), fall back to jar
-          if command -v 7z >/dev/null 2>&1; then
-            echo "Extracting with 7z..."
-            7z x -y ../original.apk
-          else
-            echo "Extracting with jar..."
-            jar xf ../original.apk
-          fi
-          echo "Extract done. Top-level:"
-          ls -la
-          test -d lib || test -d assets || { echo "Extract failed - no lib/assets"; exit 1; }
+          python3 << 'PY'
+          import zipfile, os, time, shutil
+          from datetime import datetime, timezone
 
-      - name: Inject PoC marker and rebuild
-        run: |
-          set -euo pipefail
-          cd work
-          mkdir -p assets
-          MARKER="MELON_PATCH_PIPELINE_POC_v1 $(date -u +%Y%m%dT%H%M%SZ) commit=${{ github.sha }}"
-          echo "$MARKER" > assets/melon_patch_poc.txt
-          echo "Injected marker:"
-          cat assets/melon_patch_poc.txt
-          # Remove old signatures
-          rm -rf META-INF
-          # Rebuild as zip (stored then we can re-compress if needed)
-          # Use jar for reliable APK-compatible packaging
-          jar cf ../unsigned.apk .
-          cd ..
-          # Or zip -0 then zip -9 for better compatibility
-          ls -lh unsigned.apk
-          # Verify marker
-          unzip -p unsigned.apk assets/melon_patch_poc.txt || jar xf unsigned.apk assets/melon_patch_poc.txt && cat assets/melon_patch_poc.txt
+          src = "original.apk"
+          dst = "unsigned.apk"
+          shutil.copy2(src, dst)
 
-      - name: Generate keystore and sign
+          marker = f"MELON_PATCH_PIPELINE_POC_v1 {datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')} commit={os.environ.get('GITHUB_SHA', 'local')}\n"
+          print("Marker content:", marker.strip())
+
+          # Append/update entry without re-compressing the whole archive.
+          # zipfile in append mode can add new files.
+          with zipfile.ZipFile(dst, "a", compression=zipfile.ZIP_DEFLATED) as z:
+              # Remove old META-INF signatures so resign works cleanly
+              # (we cannot delete easily in append mode; uber-apk-signer --allowResign handles existing sigs)
+              z.writestr("assets/melon_patch_poc.txt", marker)
+
+          # Verify
+          with zipfile.ZipFile(dst, "r") as z:
+              data = z.read("assets/melon_patch_poc.txt").decode()
+              print("Verified inside APK:", data.strip())
+              print("Total entries:", len(z.namelist()))
+
+          print("unsigned.apk size:", os.path.getsize(dst))
+          PY
+
+      - name: Sign APK
         run: |
           set -euo pipefail
           keytool -genkeypair -v -keystore debug.keystore -alias melonpoc \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
             -dname "CN=MelonPoC, OU=Dev, O=MelonMod, L=None, ST=None, C=US"
-          # Prefer uber-apk-signer (handles align + sign + v1/v2/v3)
           java -jar /tmp/uber-apk-signer.jar -a unsigned.apk --ks debug.keystore \
             --ksAlias melonpoc --ksPass android --ksKeyPass android \
             --allowResign --overwrite -o signed_out
-          # Find the signed apk
           find signed_out -name "*.apk" -exec cp {} melon-pipeline-test.apk \;
           ls -lh melon-pipeline-test.apk
           sha256sum melon-pipeline-test.apk | tee melon-pipeline-test.apk.sha256
 
-      - name: Verify final APK
+      - name: Final verification
         run: |
           set -euo pipefail
-          echo "=== Marker inside final APK ==="
-          unzip -p melon-pipeline-test.apk assets/melon_patch_poc.txt || true
-          python3 -c "
+          python3 << 'PY'
           import zipfile
-          z = zipfile.ZipFile('melon-pipeline-test.apk')
-          print(z.read('assets/melon_patch_poc.txt').decode())
-          print('ZIP entries:', len(z.namelist()))
-          "
-          echo "PHASE1_POC_SUCCESS"
+          with zipfile.ZipFile("melon-pipeline-test.apk", "r") as z:
+              print("Marker:", z.read("assets/melon_patch_poc.txt").decode().strip())
+              print("Entries:", len(z.namelist()))
+              # Confirm original critical files still listed
+              names = set(z.namelist())
+              for n in ["AndroidManifest.xml", "classes.dex", "lib/arm64-v8a/libil2cpp.so", "assets/bin/Data/Managed/Metadata/global-metadata.dat"]:
+                  print(f"  {n}: {'OK' if n in names else 'MISSING'}")
+          print("PHASE1_POC_SUCCESS")
+          PY
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -143,6 +131,9 @@ jobs:
         run: |
           echo "### Melon Phase 1 PoC completed" >> $GITHUB_STEP_SUMMARY
           echo "- Original APK backed up" >> $GITHUB_STEP_SUMMARY
-          echo "- Harmless marker injected: assets/melon_patch_poc.txt" >> $GITHUB_STEP_SUMMARY
-          echo "- APK rebuilt and signed with debug keystore" >> $GITHUB_STEP_SUMMARY
+          echo "- Marker injected in-place (no full extract; avoids corrupted libunity.so)" >> $GITHUB_STEP_SUMMARY
+          echo "- APK signed with debug keystore" >> $GITHUB_STEP_SUMMARY
           echo "- Artifact: melon-pipeline-test" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Note: source APK has a corrupted arm64 libunity.so entry (invalid deflate)." >> $GITHUB_STEP_SUMMARY
+          echo "armeabi-v7a libunity.so is intact. Pipeline still proves inject+sign works." >> $GITHUB_STEP_SUMMARY
