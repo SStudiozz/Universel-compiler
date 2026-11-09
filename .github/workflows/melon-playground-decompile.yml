@@ -2,6 +2,9 @@ name: Melon Playground APK - Decompile
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/melon-playground-decompile.yml'
   release:
     types: [published]
 
