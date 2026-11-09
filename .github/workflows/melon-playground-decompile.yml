@@ -41,7 +41,6 @@ jobs:
 
           curl -fL https://github.com/SamboyCoding/Cpp2IL/releases/download/2022.0.7/Cpp2IL-2022.0.7-Linux -o tools/Cpp2IL
           chmod +x tools/Cpp2IL
-          tools/Cpp2IL --list-output-formats | tee output/cpp2il-output-formats.txt
 
       - name: Download APK from this repository's latest GitHub Release
         env:
@@ -89,7 +88,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p output/cpp2il
-          tools/Cpp2IL --game-path="$PWD/input/melon-sandbox-22-0-5.apk" --output-to="$PWD/output/cpp2il" --verbose 2>&1 | tee output/cpp2il.log
+          META="$PWD/$(find output/il2cpp -name global-metadata.dat -print -quit)"
+          LIB="$PWD/output/il2cpp/lib/arm64-v8a/libil2cpp.so"
+          tools/Cpp2IL --game-path="$PWD/output/il2cpp" --exe-name=libil2cpp.so --force-binary-path="$LIB" --force-metadata-path="$META" --output-root="$PWD/output/cpp2il" --analysis-level=4 --disable-registration-prompts --verbose 2>&1 | tee output/cpp2il.log
           test -n "$(find output/cpp2il -type f -print -quit)"
 
       - name: Verify reconstructed output
