@@ -20,19 +20,16 @@
     const/4 v1, 0x0
     invoke-virtual {v0, v1}, Landroid/content/Context;->getExternalFilesDir(Ljava/lang/String;)Ljava/io/File;
     move-result-object v1
-    if-nez v1, :try_int
-    goto :set
-    :try_int
-    invoke-virtual {v0}, Landroid/content/Context;->getFilesDir()Ljava/io/File;
-    move-result-object v1
-    :set
     if-eqz v1, :fail
     iput-object v1, p0, Lcom/studio27/melonmod/MelonDocumentsProvider;->mRoot:Ljava/io/File;
     invoke-virtual {v1}, Ljava/io/File;->exists()Z
     move-result v0
-    if-nez v0, :ok
+    if-nez v0, :check_dir
     invoke-virtual {v1}, Ljava/io/File;->mkdirs()Z
-    :ok
+    :check_dir
+    invoke-virtual {v1}, Ljava/io/File;->isDirectory()Z
+    move-result v0
+    if-eqz v0, :fail
     const/4 v0, 0x1
     return v0
     :fail
@@ -238,7 +235,7 @@
     if-eqz v2, :done
     invoke-virtual {v2}, Ljava/io/File;->isDirectory()Z
     move-result v3
-    if-nez v3, :done
+    if-eqz v3, :done
     invoke-virtual {v2}, Ljava/io/File;->listFiles()[Ljava/io/File;
     move-result-object v3
     if-eqz v3, :done
