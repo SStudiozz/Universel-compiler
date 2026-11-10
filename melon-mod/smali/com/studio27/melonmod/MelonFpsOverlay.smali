@@ -18,8 +18,10 @@
 .method public static install(Landroid/app/Activity;)V
     .registers 8
     if-eqz p0, :done
+
+    # Already installed?
     sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->overlay:Landroid/widget/LinearLayout;
-    if-eqz v0, :done
+    if-nez v0, :done
 
     new-instance v0, Landroid/widget/LinearLayout;
     invoke-direct {v0, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V
@@ -28,9 +30,12 @@
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setOrientation(I)V
     const/high16 v1, -0x78000000
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setBackgroundColor(I)V
-    const/16 v1, 0xc
-    const/16 v2, 0x8
+    const/16 v1, 0x10
+    const/16 v2, 0xc
     invoke-virtual {v0, v1, v2, v1, v2}, Landroid/widget/LinearLayout;->setPadding(IIII)V
+    # Make sure overlay draws on top
+    const/high16 v1, 0x41200000
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setElevation(F)V
 
     new-instance v1, Landroid/widget/CheckBox;
     invoke-direct {v1, p0}, Landroid/widget/CheckBox;-><init>(Landroid/content/Context;)V
@@ -40,6 +45,9 @@
     invoke-virtual {v1, v2}, Landroid/widget/CheckBox;->setTextColor(I)V
     const/4 v2, 0x0
     invoke-virtual {v1, v2}, Landroid/widget/CheckBox;->setChecked(Z)V
+    # Bigger hit target
+    const/high16 v2, 0x41800000
+    invoke-virtual {v1, v2}, Landroid/widget/CheckBox;->setTextSize(F)V
     new-instance v3, Lcom/studio27/melonmod/MelonFpsOverlay$1;
     invoke-direct {v3}, Lcom/studio27/melonmod/MelonFpsOverlay$1;-><init>()V
     invoke-virtual {v1, v3}, Landroid/widget/CheckBox;->setOnCheckedChangeListener(Landroid/widget/CompoundButton$OnCheckedChangeListener;)V
@@ -52,7 +60,7 @@
     invoke-virtual {v1, v3}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
     const/4 v3, -0x1
     invoke-virtual {v1, v3}, Landroid/widget/TextView;->setTextColor(I)V
-    const/high16 v3, 0x41600000
+    const/high16 v3, 0x41800000
     invoke-virtual {v1, v3}, Landroid/widget/TextView;->setTextSize(F)V
     const/16 v3, 0x8
     invoke-virtual {v1, v3}, Landroid/widget/TextView;->setVisibility(I)V
@@ -63,9 +71,9 @@
     invoke-direct {v1, v3, v3}, Landroid/widget/FrameLayout$LayoutParams;-><init>(II)V
     const/16 v3, 0x33
     iput v3, v1, Landroid/widget/FrameLayout$LayoutParams;->gravity:I
-    const/16 v3, 0x18
+    const/16 v3, 0x20
     iput v3, v1, Landroid/widget/FrameLayout$LayoutParams;->leftMargin:I
-    const/16 v3, 0x30
+    const/16 v3, 0x60
     iput v3, v1, Landroid/widget/FrameLayout$LayoutParams;->topMargin:I
 
     :try_start_0
@@ -93,6 +101,9 @@
 
     :catch_0
     move-exception v0
+    # Clear so next attempt can retry
+    const/4 v1, 0x0
+    sput-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->overlay:Landroid/widget/LinearLayout;
 
     :done
     return-void
