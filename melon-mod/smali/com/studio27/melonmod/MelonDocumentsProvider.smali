@@ -96,10 +96,10 @@
     const-string v2, "document_id"
     aput-object v2, v0, v1
     const/4 v1, 0x1
-    const-string v2, "mime_type"
+    const-string v2, "_display_name"
     aput-object v2, v0, v1
     const/4 v1, 0x2
-    const-string v2, "display_name"
+    const-string v2, "mime_type"
     aput-object v2, v0, v1
     const/4 v1, 0x3
     const-string v2, "last_modified"
@@ -120,20 +120,25 @@
     invoke-virtual {p1}, Landroid/database/MatrixCursor;->newRow()Landroid/database/MatrixCursor$RowBuilder;
     move-result-object v0
     invoke-virtual {v0, p2}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    invoke-virtual {p3}, Ljava/io/File;->isDirectory()Z
-    move-result v1
-    if-eqz v1, :fm
-    const-string v1, "vnd.android.document/directory"
-    goto :am
-    :fm
-    const-string v1, "application/octet-stream"
-    :am
-    invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
     invoke-virtual {p3}, Ljava/io/File;->getName()Ljava/lang/String;
     move-result-object v1
-    if-nez v1, :nn
-    const-string v1, "."
-    :nn
+    if-eqz v1, :empty_name
+    invoke-virtual {v1}, Ljava/lang/String;->length()I
+    move-result v2
+    if-eqz v2, :empty_name
+    goto :have_name
+    :empty_name
+    const-string v1, "(unnamed)"
+    :have_name
+    invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
+    invoke-virtual {p3}, Ljava/io/File;->isDirectory()Z
+    move-result v1
+    if-eqz v1, :file_mime
+    const-string v1, "vnd.android.document/directory"
+    goto :add_mime
+    :file_mime
+    const-string v1, "application/octet-stream"
+    :add_mime
     invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
     invoke-virtual {p3}, Ljava/io/File;->lastModified()J
     move-result-wide v2
@@ -142,24 +147,24 @@
     invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
     invoke-virtual {p3}, Ljava/io/File;->isDirectory()Z
     move-result v1
-    if-eqz v1, :ff
+    if-eqz v1, :file_flags
     const/16 v1, 0x16
-    goto :af
-    :ff
+    goto :add_flags
+    :file_flags
     const/4 v1, 0x6
-    :af
+    :add_flags
     invoke-static {v1}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
     move-result-object v1
     invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
     invoke-virtual {p3}, Ljava/io/File;->isFile()Z
     move-result v1
-    if-eqz v1, :zs
+    if-eqz v1, :zero_size
     invoke-virtual {p3}, Ljava/io/File;->length()J
     move-result-wide v2
-    goto :as
-    :zs
+    goto :add_size
+    :zero_size
     const-wide/16 v2, 0x0
-    :as
+    :add_size
     invoke-static {v2, v3}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
     move-result-object v1
     invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
