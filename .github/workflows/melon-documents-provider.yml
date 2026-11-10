@@ -4,10 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       drive_file_id:
-        description: 'Google Drive file ID - use CLEAN original Melon APK'
-        required: true
+        description: 'Google Drive file ID - CLEAN original Melon APK'
+        required: false
+        default: ''
         type: string
       apk_url:
+        description: 'Direct APK URL (optional, preferred if set)'
         required: false
         default: ''
         type: string
@@ -43,9 +45,22 @@ jobs:
       - name: Download CLEAN Melon APK
         run: |
           set -euo pipefail
-          gdown "${{ github.event.inputs.drive_file_id }}" -O original.apk
+          URL="${{ github.event.inputs.apk_url }}"
+          FID="${{ github.event.inputs.drive_file_id }}"
+          if [ -n "$URL" ]; then
+            echo "Downloading from apk_url..."
+            wget -q -O original.apk "$URL" || curl -L --fail -o original.apk "$URL"
+          elif [ -n "$FID" ]; then
+            echo "Downloading from Drive id $FID..."
+            gdown --fuzzy "https://drive.google.com/uc?id=${FID}" -O original.apk \
+              || gdown "$FID" -O original.apk \
+              || gdown "https://drive.google.com/file/d/${FID}/view" -O original.apk
+          else
+            echo "Need drive_file_id or apk_url"; exit 1
+          fi
           ls -lh original.apk
           test "$(stat -c%s original.apk)" -gt 50000000
+          head -c 4 original.apk | od -An -tx1
 
       - name: Full Apktool decode
         run: |
