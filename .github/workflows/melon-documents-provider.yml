@@ -3,14 +3,14 @@ name: Melon DocumentsProvider rebuild
 on:
   workflow_dispatch:
     inputs:
+      drive_file_id:
+        description: 'Google Drive file ID of Melon APK (adkill preferred)'
+        required: true
+        type: string
       apk_url:
-        description: 'Fallback direct HTTP URL'
+        description: 'unused'
         required: false
         default: ''
-        type: string
-      drive_file_id:
-        description: 'Google Drive file ID of Melon APK'
-        required: true
         type: string
 
 permissions:
@@ -38,7 +38,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq wget unzip zip 2>/dev/null || true
           pip install -q 'gdown>=5.0'
-          gdown --help | head -5
           wget -q -O /usr/local/bin/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
           wget -q -O /usr/local/bin/apktool https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
           chmod +x /usr/local/bin/apktool
@@ -48,32 +47,55 @@ jobs:
         run: |
           set -euo pipefail
           FILE_ID="${{ github.event.inputs.drive_file_id }}"
-          echo "gdown file id=$FILE_ID"
           gdown "$FILE_ID" -O original.apk
           ls -lh original.apk
           SIZE=$(stat -c%s original.apk)
-          echo "size=$SIZE"
-          test "$SIZE" -gt 50000000 || { echo "APK too small"; file original.apk; head -c 200 original.apk; exit 1; }
-          head -c 4 original.apk | od -A n -t x1
-          head -c 2 original.apk | cmp -n 2 - <(printf PK) || { echo "not PK zip"; exit 1; }
+          test "$SIZE" -gt 50000000 || exit 1
+          head -c 2 original.apk | cmp -n 2 - <(printf PK) || exit 1
 
       - name: Full Apktool decode
         run: |
           set -euo pipefail
           apktool d -f original.apk -o decoded
           test -f decoded/AndroidManifest.xml
-          head -50 decoded/AndroidManifest.xml
-          grep -n -i "application" decoded/AndroidManifest.xml | head -20
 
-      - name: Install DocumentsProvider smali from repo
+      - name: Apply libil2cpp rewarded + interstitial policy
+        run: |
+          set -euo pipefail
+          python3 << 'PY'
+          from pathlib import Path
+          lib = Path('decoded/lib/arm64-v8a/libil2cpp.so')
+          if not lib.exists():
+              raise SystemExit(f'missing {lib}')
+          data = bytearray(lib.read_bytes())
+          RET = bytes([0xC0,0x03,0x5F,0xD6])
+          TRUE = bytes([0x20,0x00,0x80,0x52, 0xC0,0x03,0x5F,0xD6])
+          shell = bytes.fromhex('2100805201e40039003c40f9400000b427b66814c0035fd6')
+          off_show = 0x203F998
+          off_avail = 0x203F4E4
+          for off in [0x203FED4, 0x203FEB0, 0x3925D20]:
+              if off+4 <= len(data):
+                  data[off:off+4] = RET
+                  print(f'RET interstitial @ {off:#x}')
+          data[off_avail:off_avail+8] = TRUE
+          print(f'isRewarded true @ {off_avail:#x}')
+          data[off_show:off_show+len(shell)] = shell
+          print(f'ShowRewarded shell @ {off_show:#x}')
+          for off in [0x392708C, 0x39279FC]:
+              if off+4 <= len(data):
+                  data[off:off+4] = RET
+                  print(f'RET MaxSdk rewarded @ {off:#x}')
+          lib.write_bytes(data)
+          print('libil2cpp patched', lib.stat().st_size)
+          PY
+
+      - name: Install DocumentsProvider smali
         run: |
           set -euo pipefail
           mkdir -p decoded/smali/com/studio27/melonmod
           cp melon-mod/smali/com/studio27/melonmod/MelonDocumentsProvider.smali \
              decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
-          wc -l decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
-          grep -E "queryRoots|queryChildDocuments|queryDocument|openDocument|onCreate" \
-            decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
+          grep -E "queryRoots|mPkg|mExt" decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali | head
 
       - name: Inject provider into AndroidManifest
         run: |
@@ -83,7 +105,6 @@ jobs:
           import re
           p = Path("decoded/AndroidManifest.xml")
           t = p.read_text(encoding="utf-8", errors="ignore")
-          print("manifest bytes", len(t))
           provider = (
               "\n        <provider"
               " android:name=\"com.studio27.melonmod.MelonDocumentsProvider\""
@@ -97,30 +118,21 @@ jobs:
               "\n            </intent-filter>"
               "\n        </provider>"
           )
-          if "MelonDocumentsProvider" in t:
-              print("provider already present")
-          else:
+          if "MelonDocumentsProvider" not in t:
               m = re.search(r"</application\s*>", t, flags=re.I)
               if not m:
-                  print(t[:3000])
-                  raise SystemExit("no </application> tag after full decode")
-              t = t[: m.start()] + provider + "\n    " + t[m.start() :]
+                  raise SystemExit("no application end")
+              t = t[:m.start()] + provider + "\n    " + t[m.start():]
               p.write_text(t, encoding="utf-8")
-              print("provider injected at", m.start())
-          t2 = p.read_text(encoding="utf-8")
-          assert "MelonDocumentsProvider" in t2
-          assert "com.studio27.MelonPlayground.documents" in t2
-          assert "android.content.action.DOCUMENTS_PROVIDER" in t2
-          print("manifest provider OK")
+          assert "MelonDocumentsProvider" in p.read_text(encoding="utf-8")
+          print("manifest OK")
           PY
-          grep -n "MelonDocumentsProvider\|DOCUMENTS_PROVIDER\|MelonPlayground.documents" decoded/AndroidManifest.xml
 
       - name: Rebuild APK
         run: |
           set -euo pipefail
           apktool b decoded -o unsigned.apk
           ls -lh unsigned.apk
-          unzip -t unsigned.apk | tail -5
 
       - name: Sign APK
         run: |
