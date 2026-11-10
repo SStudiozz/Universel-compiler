@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
           apktool d -f original.apk -o decoded
 
-      - name: Kill interstitials + free coins + force FPS counter
+      - name: Kill interstitials + camera shake on hits (no coin patch)
         run: |
           set -euo pipefail
           python3 << 'PY'
@@ -61,6 +61,7 @@ jobs:
           lib = Path('decoded/lib/arm64-v8a/libil2cpp.so')
           data = bytearray(lib.read_bytes())
           RET = bytes([0xC0, 0x03, 0x5F, 0xD6])
+
           for off, name in [
               (0x203FED4, 'AdsManager.ShowInterstitial'),
               (0x203FEB0, 'AdsManager.ShowAdWithDelay'),
@@ -69,38 +70,32 @@ jobs:
               data[off:off+4] = RET
               print('RET', name, hex(off))
 
-          # WalletController.CheckEnoughCoinsForPrice -> always onCompleted(true)
-          coin_off = 0x20EF8E4
-          coin_va = 0x20F08E4
-          invoke_va = 0x37B86B0
-          imm = (invoke_va - (coin_va + 12)) // 4
-          bl = (0x94000000 | (imm & 0x3FFFFFF)).to_bytes(4, 'little')
-          patch = (
-              bytes.fromhex('e00302aa') +
-              bytes.fromhex('21008052') +
-              bytes.fromhex('400000b4') +
-              bl +
-              bytes.fromhex('c0035fd6')
-          )
-          data[coin_off:coin_off+len(patch)] = patch
-          print('coin gate always true', patch.hex())
-
-          # Force FPS counter on (MobileConsole showFPS path)
-          fps_off = 0x212800C
-          chunk = bytes(data[fps_off:fps_off+64])
-          idx = chunk.find(bytes.fromhex('68c24039'))
+          # Camera shake: SetShake early-exit NOP so small shakes apply
+          shake_off = 0x2108528
+          seq = bytes.fromhex('6c00005441000037c0035fd6')
+          chunk = bytes(data[shake_off:shake_off+0x40])
+          idx = chunk.find(seq)
           if idx >= 0:
-              data[fps_off+idx:fps_off+idx+4] = bytes.fromhex('28008052')
-              print('UpdateShowFPS force on')
-          init_off = 0x2127F6C
-          chunk2 = bytes(data[init_off:init_off+128])
-          idx2 = chunk2.find(bytes.fromhex('68c20039'))
-          if idx2 >= 0:
-              data[init_off+idx2-4:init_off+idx2] = bytes.fromhex('28008052')
-              print('default _showFPS=true')
+              data[shake_off+idx:shake_off+idx+12] = bytes.fromhex('1f2003d5') * 3
+              print('SetShake early-exit NOP at', hex(shake_off+idx))
+          else:
+              idx2 = chunk.find(bytes.fromhex('c0035fd6'))
+              if 0 <= idx2 < 0x30:
+                  data[shake_off+idx2:shake_off+idx2+4] = bytes.fromhex('1f2003d5')
+                  print('SetShake ret NOP at', hex(shake_off+idx2))
+              else:
+                  print('SetShake pattern not found')
+
+          # CollisionActivityChecker: do not skip when shouldShake flag is false
+          col_off = 0x21557C4
+          col = bytes(data[col_off:col_off+0x80])
+          if bytes.fromhex('c8000037') in col:
+              i = col.find(bytes.fromhex('c8000037'))
+              data[col_off+i:col_off+i+4] = bytes.fromhex('1f2003d5')
+              print('collision shouldShake skip NOP at', hex(col_off+i))
 
           lib.write_bytes(data)
-          print('shop rewarded ads left intact; no FPS unlock')
+          print('NO coin patch; shop/rewarded left intact')
           PY
 
       - name: Install real single-root DocumentsProvider
