@@ -16,6 +16,7 @@
 
 .method private addFileRow(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
     .registers 8
+    if-nez p3, :cond_ret
     invoke-virtual {p1}, Landroid/database/MatrixCursor;->newRow()Landroid/database/MatrixCursor$RowBuilder;
     move-result-object v0
     invoke-virtual {v0, p2}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
@@ -30,6 +31,9 @@
     invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
     invoke-virtual {p3}, Ljava/io/File;->getName()Ljava/lang/String;
     move-result-object v1
+    if-nez v1, :cond_name
+    const-string v1, ""
+    :cond_name
     invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
     invoke-virtual {p3}, Ljava/io/File;->lastModified()J
     move-result-wide v2
@@ -59,6 +63,7 @@
     invoke-static {v2, v3}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
     move-result-object v1
     invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
+    :cond_ret
     return-void
 .end method
 
@@ -92,6 +97,8 @@
 .method private resolveDocId(Ljava/lang/String;)Ljava/io/File;
     .registers 5
     if-eqz p1, :cond_null
+    iget-object v0, p0, Lcom/studio27/melonmod/MelonDocumentsProvider;->mRoot:Ljava/io/File;
+    if-nez v0, :cond_null
     const-string v0, "root"
     invoke-virtual {v0, p1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
     move-result v0
@@ -123,7 +130,7 @@
     new-instance p1, Ljava/lang/StringBuilder;
     invoke-direct {p1}, Ljava/lang/StringBuilder;-><init>()V
     invoke-virtual {p1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    sget-object v2, Ljava/io/File;->separator:Ljava/lang/String;
+    const-string v2, "/"
     invoke-virtual {p1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     invoke-virtual {p1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object p1
@@ -132,12 +139,57 @@
     if-eqz p1, :cond_null
     return-object v1
     :try_end_0
-    .catch Ljava/io/IOException; {:try_start_0 .. :try_end_0} :catch_0
+    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
     :catch_0
     move-exception p1
     :cond_null
     const/4 p1, 0x0
     return-object p1
+.end method
+
+
+.method public getDocumentType(Ljava/lang/String;)Ljava/lang/String;
+    .registers 4
+    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
+    move-result-object v0
+    if-eqz v0, :cond_unk
+    invoke-virtual {v0}, Ljava/io/File;->isDirectory()Z
+    move-result v1
+    if-eqz v1, :cond_file
+    const-string v1, "vnd.android.document/directory"
+    return-object v1
+    :cond_file
+    const-string v1, "application/octet-stream"
+    return-object v1
+    :cond_unk
+    const-string v1, "application/octet-stream"
+    return-object v1
+.end method
+
+
+.method public isChildDocument(Ljava/lang/String;Ljava/lang/String;)Z
+    .registers 5
+    if-eqz p1, :cond_no
+    if-eqz p2, :cond_no
+    invoke-virtual {p2, p1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+    move-result v0
+    if-nez v0, :cond_yes
+    new-instance v0, Ljava/lang/StringBuilder;
+    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-virtual {v0, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    const-string v1, "/"
+    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v0
+    invoke-virtual {p2, v0}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
+    move-result v0
+    return v0
+    :cond_yes
+    const/4 v0, 0x1
+    return v0
+    :cond_no
+    const/4 v0, 0x0
+    return v0
 .end method
 
 
@@ -227,6 +279,7 @@
     :cond_loop
     if-ge v5, v4, :cond_end
     aget-object v6, v3, v5
+    if-nez v6, :cond_next
     new-instance v7, Ljava/lang/StringBuilder;
     invoke-direct {v7}, Ljava/lang/StringBuilder;-><init>()V
     invoke-virtual {v7, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
@@ -238,6 +291,7 @@
     invoke-virtual {v7}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v7
     invoke-direct {p0, v1, v7, v6}, Lcom/studio27/melonmod/MelonDocumentsProvider;->addFileRow(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
+    :cond_next
     add-int/lit8 v5, v5, 0x1
     goto :cond_loop
     :cond_end
