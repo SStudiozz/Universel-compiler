@@ -13,7 +13,7 @@
 
 
 .method public onCreate()Z
-    .registers 3
+    .registers 4
     invoke-virtual {p0}, Lcom/studio27/melonmod/MelonDocumentsProvider;->getContext()Landroid/content/Context;
     move-result-object v0
     if-eqz v0, :fail
@@ -30,6 +30,14 @@
     invoke-virtual {v1}, Ljava/io/File;->isDirectory()Z
     move-result v0
     if-eqz v0, :fail
+    new-instance v0, Ljava/io/File;
+    const-string v2, "Mods"
+    invoke-direct {v0, v1, v2}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
+    invoke-virtual {v0}, Ljava/io/File;->exists()Z
+    move-result v2
+    if-nez v2, :ok
+    invoke-virtual {v0}, Ljava/io/File;->mkdirs()Z
+    :ok
     const/4 v0, 0x1
     return v0
     :fail
