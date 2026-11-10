@@ -1,10 +1,10 @@
-name: Melon DocumentsProvider + AdKill rebuild
+name: Melon DocumentsProvider rebuild
 
 on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: 'Direct URL to Melon APK (prefer adkill or clean 22.0.5)'
+        description: 'Direct URL to Melon APK (adkill preferred)'
         required: true
         type: string
 
@@ -40,345 +40,70 @@ jobs:
           ls -lh original.apk
           head -c 4 original.apk | od -A n -t x1
 
-      - name: Decode APK (full, for readable manifest)
+      - name: Full Apktool decode
         run: |
           set -euo pipefail
-          # Full decode so AndroidManifest is XML text
           apktool d -f original.apk -o decoded
           test -f decoded/AndroidManifest.xml
-          echo "=== manifest head ==="
-          head -40 decoded/AndroidManifest.xml
-          echo "=== application tags ==="
-          grep -n "application" decoded/AndroidManifest.xml | head -20
+          head -50 decoded/AndroidManifest.xml
+          grep -n -i "application" decoded/AndroidManifest.xml | head -20
 
-      - name: Write DocumentsProvider smali (multi-root: files + saves/mods)
+      - name: Install DocumentsProvider smali from repo
         run: |
           set -euo pipefail
           mkdir -p decoded/smali/com/studio27/melonmod
-          cat > decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali << 'EOF'
-.class public Lcom/studio27/melonmod/MelonDocumentsProvider;
-.super Landroid/provider/DocumentsProvider;
-.source "MelonDocumentsProvider.java"
-
-# Full access under app external files (saves, mods, Unity persistentDataPath, etc.)
-
-.field private static final AUTHORITY:Ljava/lang/String; = "com.studio27.MelonPlayground.documents"
-.field private static final ROOT_ID:Ljava/lang/String; = "root"
-.field private mRoot:Ljava/io/File;
-
-.method public constructor <init>()V
-    .locals 0
-    invoke-direct {p0}, Landroid/provider/DocumentsProvider;-><init>()V
-    return-void
-.end method
-
-.method public onCreate()Z
-    .locals 3
-    invoke-virtual {p0}, Lcom/studio27/melonmod/MelonDocumentsProvider;->getContext()Landroid/content/Context;
-    move-result-object v0
-    const/4 v1, 0x0
-    invoke-virtual {v0, v1}, Landroid/content/Context;->getExternalFilesDir(Ljava/lang/String;)Ljava/io/File;
-    move-result-object v1
-    if-nez v1, :have
-    invoke-virtual {v0}, Landroid/content/Context;->getFilesDir()Ljava/io/File;
-    move-result-object v1
-    :have
-    iput-object v1, p0, Lcom/studio27/melonmod/MelonDocumentsProvider;->mRoot:Ljava/io/File;
-    invoke-virtual {v1}, Ljava/io/File;->exists()Z
-    move-result v2
-    if-nez v2, :ok
-    invoke-virtual {v1}, Ljava/io/File;->mkdirs()Z
-    :ok
-    const/4 v2, 0x1
-    return v2
-.end method
-
-.method private resolveDocId(Ljava/lang/String;)Ljava/io/File;
-    .locals 3
-    const-string v0, "root"
-    invoke-virtual {v0, p1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
-    move-result v0
-    if-eqz v0, :child
-    iget-object v0, p0, Lcom/studio27/melonmod/MelonDocumentsProvider;->mRoot:Ljava/io/File;
-    return-object v0
-    :child
-    const-string v0, "root/"
-    invoke-virtual {p1, v0}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
-    move-result v0
-    if-eqz v0, :null
-    const/4 v0, 0x5
-    invoke-virtual {p1, v0}, Ljava/lang/String;->substring(I)Ljava/lang/String;
-    move-result-object v0
-    new-instance v1, Ljava/io/File;
-    iget-object v2, p0, Lcom/studio27/melonmod/MelonDocumentsProvider;->mRoot:Ljava/io/File;
-    invoke-direct {v1, v2, v0}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
-    # path traversal guard
-    invoke-virtual {v1}, Ljava/io/File;->getCanonicalPath()Ljava/lang/String;
-    move-result-object v0
-    iget-object v2, p0, Lcom/studio27/melonmod/MelonDocumentsProvider;->mRoot:Ljava/io/File;
-    invoke-virtual {v2}, Ljava/io/File;->getCanonicalPath()Ljava/lang/String;
-    move-result-object v2
-    invoke-virtual {v0, v2}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
-    move-result v2
-    if-nez v2, :ret
-    const/4 v1, 0x0
-    :ret
-    return-object v1
-    :null
-    const/4 v0, 0x0
-    return-object v0
-.end method
-
-.method private colsDefault()[Ljava/lang/String;
-    .locals 3
-    const/4 v0, 0x6
-    new-array v0, v0, [Ljava/lang/String;
-    const/4 v1, 0x0
-    const-string v2, "document_id"
-    aput-object v2, v0, v1
-    const/4 v1, 0x1
-    const-string v2, "mime_type"
-    aput-object v2, v0, v1
-    const/4 v1, 0x2
-    const-string v2, "display_name"
-    aput-object v2, v0, v1
-    const/4 v1, 0x3
-    const-string v2, "last_modified"
-    aput-object v2, v0, v1
-    const/4 v1, 0x4
-    const-string v2, "flags"
-    aput-object v2, v0, v1
-    const/4 v1, 0x5
-    const-string v2, "_size"
-    aput-object v2, v0, v1
-    return-object v0
-.end method
-
-.method private addFileRow(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
-    .locals 5
-    invoke-virtual {p1}, Landroid/database/MatrixCursor;->newRow()Landroid/database/MatrixCursor$RowBuilder;
-    move-result-object v0
-    invoke-virtual {v0, p2}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    invoke-virtual {p3}, Ljava/io/File;->isDirectory()Z
-    move-result v1
-    if-eqz v1, :file
-    const-string v1, "vnd.android.document/directory"
-    goto :mime
-    :file
-    const-string v1, "application/octet-stream"
-    :mime
-    invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    invoke-virtual {p3}, Ljava/io/File;->getName()Ljava/lang/String;
-    move-result-object v1
-    invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    invoke-virtual {p3}, Ljava/io/File;->lastModified()J
-    move-result-wide v1
-    invoke-static {v1, v2}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
-    move-result-object v1
-    invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    # flags: DIR_SUPPORTS_CREATE | SUPPORTS_WRITE | SUPPORTS_DELETE for dirs/files as appropriate
-    invoke-virtual {p3}, Ljava/io/File;->isDirectory()Z
-    move-result v1
-    if-eqz v1, :ff
-    const/16 v1, 0x16
-    goto :fl
-    :ff
-    const/4 v1, 0x6
-    :fl
-    invoke-static {v1}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
-    move-result-object v1
-    invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    invoke-virtual {p3}, Ljava/io/File;->isFile()Z
-    move-result v1
-    if-eqz v1, :sz0
-    invoke-virtual {p3}, Ljava/io/File;->length()J
-    move-result-wide v1
-    goto :sz
-    :sz0
-    const-wide/16 v1, 0x0
-    :sz
-    invoke-static {v1, v2}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
-    move-result-object v1
-    invoke-virtual {v0, v1}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    return-void
-.end method
-
-.method public queryRoots([Ljava/lang/String;)Landroid/database/Cursor;
-    .locals 4
-    new-instance v0, Landroid/database/MatrixCursor;
-    const/4 v1, 0x5
-    new-array v1, v1, [Ljava/lang/String;
-    const/4 v2, 0x0
-    const-string v3, "root_id"
-    aput-object v3, v1, v2
-    const/4 v2, 0x1
-    const-string v3, "flags"
-    aput-object v3, v1, v2
-    const/4 v2, 0x2
-    const-string v3, "title"
-    aput-object v3, v1, v2
-    const/4 v2, 0x3
-    const-string v3, "document_id"
-    aput-object v3, v1, v2
-    const/4 v2, 0x4
-    const-string v3, "mime_types"
-    aput-object v3, v1, v2
-    invoke-direct {v0, v1}, Landroid/database/MatrixCursor;-><init>([Ljava/lang/String;)V
-    invoke-virtual {v0}, Landroid/database/MatrixCursor;->newRow()Landroid/database/MatrixCursor$RowBuilder;
-    move-result-object v1
-    const-string v2, "root"
-    invoke-virtual {v1, v2}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    # LOCAL_ONLY | SUPPORTS_CREATE | SUPPORTS_IS_CHILD
-    const/16 v3, 0x13
-    invoke-static {v3}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
-    move-result-object v3
-    invoke-virtual {v1, v3}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    const-string v3, "Melon Playground"
-    invoke-virtual {v1, v3}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    invoke-virtual {v1, v2}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    const-string v3, "*/*"
-    invoke-virtual {v1, v3}, Landroid/database/MatrixCursor$RowBuilder;->add(Ljava/lang/Object;)Landroid/database/MatrixCursor$RowBuilder;
-    return-object v0
-.end method
-
-.method public queryDocument(Ljava/lang/String;[Ljava/lang/String;)Landroid/database/Cursor;
-    .locals 3
-    invoke-direct {p0}, Lcom/studio27/melonmod/MelonDocumentsProvider;->colsDefault()[Ljava/lang/String;
-    move-result-object v0
-    new-instance v1, Landroid/database/MatrixCursor;
-    invoke-direct {v1, v0}, Landroid/database/MatrixCursor;-><init>([Ljava/lang/String;)V
-    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
-    move-result-object v2
-    if-nez v2, :ret
-    invoke-direct {p0, v1, p1, v2}, Lcom/studio27/melonmod/MelonDocumentsProvider;->addFileRow(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
-    :ret
-    return-object v1
-.end method
-
-.method public queryChildDocuments(Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
-    .locals 9
-    invoke-direct {p0}, Lcom/studio27/melonmod/MelonDocumentsProvider;->colsDefault()[Ljava/lang/String;
-    move-result-object v0
-    new-instance v1, Landroid/database/MatrixCursor;
-    invoke-direct {v1, v0}, Landroid/database/MatrixCursor;-><init>([Ljava/lang/String;)V
-    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
-    move-result-object v2
-    if-eqz v2, :end
-    invoke-virtual {v2}, Ljava/io/File;->isDirectory()Z
-    move-result v3
-    if-nez v3, :end
-    invoke-virtual {v2}, Ljava/io/File;->listFiles()[Ljava/io/File;
-    move-result-object v3
-    if-nez v3, :end
-    array-length v4, v3
-    const/4 v5, 0x0
-    :loop
-    if-ge v5, v4, :end
-    aget-object v6, v3, v5
-    new-instance v7, Ljava/lang/StringBuilder;
-    invoke-direct {v7}, Ljava/lang/StringBuilder;-><init>()V
-    const-string v8, "root/"
-    invoke-virtual {v7, v8}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    # relative path from root
-    invoke-virtual {v6}, Ljava/io/File;->getName()Ljava/lang/String;
-    move-result-object v8
-    # if parent is not root, need deeper relative path - simple one-level for list; recursive browse uses doc ids
-    const-string v8, "root"
-    invoke-virtual {v8, p1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
-    move-result v8
-    if-eqz v8, :nested
-    new-instance v7, Ljava/lang/StringBuilder;
-    invoke-direct {v7}, Ljava/lang/StringBuilder;-><init>()V
-    const-string v8, "root/"
-    invoke-virtual {v7, v8}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v6}, Ljava/io/File;->getName()Ljava/lang/String;
-    move-result-object v8
-    invoke-virtual {v7, v8}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    goto :id_done
-    :nested
-    new-instance v7, Ljava/lang/StringBuilder;
-    invoke-direct {v7}, Ljava/lang/StringBuilder;-><init>()V
-    invoke-virtual {v7, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    const-string v8, "/"
-    invoke-virtual {v7, v8}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v6}, Ljava/io/File;->getName()Ljava/lang/String;
-    move-result-object v8
-    invoke-virtual {v7, v8}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    :id_done
-    invoke-virtual {v7}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-    move-result-object v7
-    invoke-direct {p0, v1, v7, v6}, Lcom/studio27/melonmod/MelonDocumentsProvider;->addFileRow(Landroid/database/MatrixCursor;Ljava/lang/String;Ljava/io/File;)V
-    add-int/lit8 v5, v5, 0x1
-    goto :loop
-    :end
-    return-object v1
-.end method
-
-.method public openDocument(Ljava/lang/String;Ljava/lang/String;Landroid/os/CancellationSignal;)Landroid/os/ParcelFileDescriptor;
-    .locals 3
-    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
-    move-result-object v0
-    if-nez v0, :err
-    const-string v1, "r"
-    invoke-virtual {p2, v1}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
-    move-result v1
-    if-eqz v1, :w
-    const-string v1, "w"
-    invoke-virtual {p2, v1}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
-    move-result v1
-    if-eqz v1, :ro
-    const/high16 v1, 0x30000000
-    goto :open
-    :ro
-    const/high16 v1, 0x10000000
-    goto :open
-    :w
-    const/high16 v1, 0x2c000000
-    :open
-    invoke-static {v0, v1}, Landroid/os/ParcelFileDescriptor;->open(Ljava/io/File;I)Landroid/os/ParcelFileDescriptor;
-    move-result-object v1
-    return-object v1
-    :err
-    new-instance v1, Ljava/io/FileNotFoundException;
-    invoke-direct {v1, p1}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
-    throw v1
-.end method
-EOF
+          cp melon-mod/smali/com/studio27/melonmod/MelonDocumentsProvider.smali \
+             decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
+          wc -l decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
+          grep -E "queryRoots|queryChildDocuments|queryDocument|openDocument|onCreate" \
+            decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
 
       - name: Inject provider into AndroidManifest
         run: |
           set -euo pipefail
-          python3 << 'PY'
+          python3 - <<'PY'
           from pathlib import Path
           import re
           p = Path("decoded/AndroidManifest.xml")
           t = p.read_text(encoding="utf-8", errors="ignore")
-          print("manifest length", len(t))
-          print("has application", "application" in t.lower())
-          provider = '''
-                  <provider android:name="com.studio27.melonmod.MelonDocumentsProvider" android:authorities="com.studio27.MelonPlayground.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
-                      <intent-filter>
-                          <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
-                      </intent-filter>
-                  </provider>'''
+          print("manifest bytes", len(t))
+          provider = (
+              "\n        <provider"
+              " android:name=\"com.studio27.melonmod.MelonDocumentsProvider\""
+              " android:authorities=\"com.studio27.MelonPlayground.documents\""
+              " android:exported=\"true\""
+              " android:grantUriPermissions=\"true\""
+              " android:permission=\"android.permission.MANAGE_DOCUMENTS\""
+              " android:enabled=\"true\">"
+              "\n            <intent-filter>"
+              "\n                <action android:name=\"android.content.action.DOCUMENTS_PROVIDER\" />"
+              "\n            </intent-filter>"
+              "\n        </provider>"
+          )
           if "MelonDocumentsProvider" in t:
-              print("already present")
-          elif re.search(r"</application>", t, re.I):
-              t = re.sub(r"</application>", provider + "\n    </application>", t, count=1, flags=re.I)
-              p.write_text(t, encoding="utf-8")
-              print("injected before </application>")
+              print("provider already present")
           else:
-              # show snippet for debug
-              print(t[:2000])
-              raise SystemExit("Could not find </application> in manifest")
+              m = re.search(r"</application\s*>", t, flags=re.I)
+              if not m:
+                  print(t[:3000])
+                  raise SystemExit("no </application> tag after full decode")
+              t = t[: m.start()] + provider + "\n    " + t[m.start() :]
+              p.write_text(t, encoding="utf-8")
+              print("provider injected at", m.start())
+          t2 = p.read_text(encoding="utf-8")
+          assert "MelonDocumentsProvider" in t2
+          assert "com.studio27.MelonPlayground.documents" in t2
+          assert "android.content.action.DOCUMENTS_PROVIDER" in t2
+          print("manifest provider OK")
           PY
-          grep -n "MelonDocumentsProvider" decoded/AndroidManifest.xml
+          grep -n "MelonDocumentsProvider\|DOCUMENTS_PROVIDER\|MelonPlayground.documents" decoded/AndroidManifest.xml
 
       - name: Rebuild APK
         run: |
           set -euo pipefail
           apktool b decoded -o unsigned.apk
           ls -lh unsigned.apk
+          unzip -t unsigned.apk | tail -5
 
       - name: Sign APK
         run: |
@@ -400,4 +125,5 @@ EOF
           path: |
             melon-files-sidebar.apk
             melon-files-sidebar.apk.sha256
+          if-no-files-found: error
           retention-days: 14
