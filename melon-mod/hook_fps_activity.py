@@ -2,30 +2,27 @@ from pathlib import Path
 import re
 
 targets = []
+# Prefer exact UnityPlayerActivity
 for p in Path('decoded').rglob('*.smali'):
-    name = str(p)
-    if 'UnityPlayerActivity' in name or p.name == 'UnityPlayerActivity.smali':
+    if p.name == 'UnityPlayerActivity.smali' or 'UnityPlayerActivity' in str(p):
         targets.append(p)
 
+# Fallback: any Activity that mentions UnityPlayer
 if not targets:
-    for p in Path('decoded/smali').rglob('*Activity*.smali'):
+    for p in Path('decoded').rglob('*Activity*.smali'):
         t = p.read_text(errors='ignore')
-        if 'UnityPlayer' in t:
+        if 'UnityPlayer' in t or 'com/unity3d/player' in t:
             targets.append(p)
 
-print('candidates', [str(p) for p in targets[:8]])
-hooked = False
+print('candidates', [str(p) for p in targets[:12]])
+hooked = 0
 for p in targets:
     t = p.read_text(errors='ignore')
     if 'MelonFpsOverlay' in t:
         print('already hooked', p)
-        hooked = True
-        break
-    pattern = re.compile(
-        r'(\x2emethod\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
-        r'invoke-super\s+\{([^}]+)\},\s*L[^;]+;->onCreate\(Landroid/os/Bundle;\)V)'.replace('\\x2e', '.'),
-        re.M,
-    )
+        hooked += 1
+        continue
+
     pattern = re.compile(
         r'(\.method\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
         r'invoke-super\s+\{([^}]+)\},\s*L[^;]+;->onCreate\(Landroid/os/Bundle;\)V)',
@@ -33,18 +30,21 @@ for p in targets:
     )
     m = pattern.search(t)
     if not m:
+        print('no onCreate match in', p)
         continue
+
     regs = m.group(2)
     this_reg = regs.split(',')[0].strip()
     inject = (
-        '\n    invoke-static {' + this_reg +
-        '}, Lcom/studio27/melonmod/MelonFpsOverlay;->install(Landroid/app/Activity;)V\n'
+        f"\n\n    # Melon FPS overlay\n"
+        f"    invoke-static {{{this_reg}}}, Lcom/studio27/melonmod/MelonFpsOverlay;->install(Landroid/app/Activity;)V\n"
     )
     t = t[: m.end()] + inject + t[m.end() :]
     p.write_text(t)
     print('hooked FPS into', p, 'reg', this_reg)
-    hooked = True
-    break
+    hooked += 1
 
-if not hooked:
-    print('WARNING: could not hook FPS overlay')
+if hooked == 0:
+    print('WARNING: could not hook FPS overlay into any activity')
+else:
+    print(f'FPS hook ok ({hooked} files)')
