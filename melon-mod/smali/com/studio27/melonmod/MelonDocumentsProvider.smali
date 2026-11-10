@@ -156,10 +156,10 @@
     invoke-virtual {p3}, Ljava/io/File;->isDirectory()Z
     move-result v1
     if-eqz v1, :file_flags
-    const/16 v1, 0x16
+    const/16 v1, 0x14e
     goto :add_flags
     :file_flags
-    const/4 v1, 0x6
+    const/16 v1, 0x146
     :add_flags
     invoke-static {v1}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
     move-result-object v1
@@ -358,4 +358,221 @@
     :no
     const/4 v0, 0x0
     return v0
+.end method
+
+
+.method public createDocument(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    .registers 7
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Ljava/io/FileNotFoundException;
+        }
+    .end annotation
+    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
+    move-result-object v0
+    if-nez v0, :ok_parent
+    new-instance v1, Ljava/io/FileNotFoundException;
+    const-string v2, "parent"
+    invoke-direct {v1, v2}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v1
+    :ok_parent
+    if-nez p3, :has_name
+    const-string p3, "New file"
+    :has_name
+    new-instance v1, Ljava/io/File;
+    invoke-direct {v1, v0, p3}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
+    const-string v0, "vnd.android.document/directory"
+    invoke-virtual {v0, p2}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+    move-result v0
+    if-eqz v0, :make_file
+    invoke-virtual {v1}, Ljava/io/File;->mkdir()Z
+    move-result v0
+    if-nez v0, :made
+    new-instance v0, Ljava/io/FileNotFoundException;
+    const-string v2, "mkdir failed"
+    invoke-direct {v0, v2}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v0
+    :make_file
+    invoke-virtual {v1}, Ljava/io/File;->createNewFile()Z
+    move-result v0
+    if-nez v0, :made
+    invoke-virtual {v1}, Ljava/io/File;->exists()Z
+    move-result v0
+    if-nez v0, :made
+    new-instance v0, Ljava/io/FileNotFoundException;
+    const-string v2, "create failed"
+    invoke-direct {v0, v2}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v0
+    :made
+    new-instance v0, Ljava/lang/StringBuilder;
+    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-virtual {v0, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    const-string v2, "/"
+    invoke-virtual {v0, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v1}, Ljava/io/File;->getName()Ljava/lang/String;
+    move-result-object v1
+    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v0
+    return-object v0
+.end method
+
+
+.method public deleteDocument(Ljava/lang/String;)V
+    .registers 4
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Ljava/io/FileNotFoundException;
+        }
+    .end annotation
+    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
+    move-result-object v0
+    if-nez v0, :ok
+    new-instance v1, Ljava/io/FileNotFoundException;
+    invoke-direct {v1, p1}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v1
+    :ok
+    iget-object v1, p0, Lcom/studio27/melonmod/MelonDocumentsProvider;->mRoot:Ljava/io/File;
+    invoke-virtual {v0, v1}, Ljava/io/File;->equals(Ljava/lang/Object;)Z
+    move-result v1
+    if-eqz v1, :del
+    new-instance v1, Ljava/io/FileNotFoundException;
+    const-string v0, "cannot delete root"
+    invoke-direct {v1, v0}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v1
+    :del
+    invoke-direct {p0, v0}, Lcom/studio27/melonmod/MelonDocumentsProvider;->deleteRecursive(Ljava/io/File;)Z
+    move-result v0
+    if-nez v0, :done
+    new-instance v0, Ljava/io/FileNotFoundException;
+    const-string v1, "delete failed"
+    invoke-direct {v0, v1}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v0
+    :done
+    return-void
+.end method
+
+
+.method private deleteRecursive(Ljava/io/File;)Z
+    .registers 7
+    if-eqz p1, :no
+    invoke-virtual {p1}, Ljava/io/File;->isDirectory()Z
+    move-result v0
+    if-eqz v0, :file
+    invoke-virtual {p1}, Ljava/io/File;->listFiles()[Ljava/io/File;
+    move-result-object v0
+    if-eqz v0, :file
+    array-length v1, v0
+    const/4 v2, 0x0
+    :loop
+    if-ge v2, v1, :file
+    aget-object v3, v0, v2
+    invoke-direct {p0, v3}, Lcom/studio27/melonmod/MelonDocumentsProvider;->deleteRecursive(Ljava/io/File;)Z
+    add-int/lit8 v2, v2, 0x1
+    goto :loop
+    :file
+    invoke-virtual {p1}, Ljava/io/File;->delete()Z
+    move-result v0
+    return v0
+    :no
+    const/4 v0, 0x0
+    return v0
+.end method
+
+
+.method public renameDocument(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    .registers 7
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Ljava/io/FileNotFoundException;
+        }
+    .end annotation
+    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
+    move-result-object v0
+    if-nez v0, :ok
+    new-instance v1, Ljava/io/FileNotFoundException;
+    invoke-direct {v1, p1}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v1
+    :ok
+    if-nez p2, :has
+    new-instance v1, Ljava/io/FileNotFoundException;
+    const-string v2, "empty name"
+    invoke-direct {v1, v2}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v1
+    :has
+    new-instance v1, Ljava/io/File;
+    invoke-virtual {v0}, Ljava/io/File;->getParentFile()Ljava/io/File;
+    move-result-object v2
+    invoke-direct {v1, v2, p2}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
+    invoke-virtual {v0, v1}, Ljava/io/File;->renameTo(Ljava/io/File;)Z
+    move-result v2
+    if-nez v2, :renamed
+    new-instance v2, Ljava/io/FileNotFoundException;
+    const-string v3, "rename failed"
+    invoke-direct {v2, v3}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v2
+    :renamed
+    const-string v2, "/"
+    invoke-virtual {p1, v2}, Ljava/lang/String;->lastIndexOf(Ljava/lang/String;)I
+    move-result v2
+    if-gez v2, :no_slash
+    const/4 v3, 0x0
+    invoke-virtual {p1, v3, v2}, Ljava/lang/String;->substring(II)Ljava/lang/String;
+    move-result-object v2
+    new-instance v3, Ljava/lang/StringBuilder;
+    invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    const-string v2, "/"
+    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v3, p2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v3}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v2
+    return-object v2
+    :no_slash
+    return-object p2
+.end method
+
+
+.method public moveDocument(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    .registers 7
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Ljava/io/FileNotFoundException;
+        }
+    .end annotation
+    invoke-direct {p0, p1}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
+    move-result-object v0
+    invoke-direct {p0, p3}, Lcom/studio27/melonmod/MelonDocumentsProvider;->resolveDocId(Ljava/lang/String;)Ljava/io/File;
+    move-result-object v1
+    if-nez v0, :ok1
+    new-instance v2, Ljava/io/FileNotFoundException;
+    invoke-direct {v2, p1}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v2
+    :ok1
+    if-nez v1, :ok2
+    new-instance v2, Ljava/io/FileNotFoundException;
+    invoke-direct {v2, p3}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v2
+    :ok2
+    new-instance v2, Ljava/io/File;
+    invoke-virtual {v0}, Ljava/io/File;->getName()Ljava/lang/String;
+    move-result-object p2
+    invoke-direct {v2, v1, p2}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
+    invoke-virtual {v0, v2}, Ljava/io/File;->renameTo(Ljava/io/File;)Z
+    move-result v1
+    if-nez v1, :moved
+    new-instance v1, Ljava/io/FileNotFoundException;
+    const-string v2, "move failed"
+    invoke-direct {v1, v2}, Ljava/io/FileNotFoundException;-><init>(Ljava/lang/String;)V
+    throw v1
+    :moved
+    new-instance v1, Ljava/lang/StringBuilder;
+    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-virtual {v1, p3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    const-string v0, "/"
+    invoke-virtual {v1, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v1, p2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v0
+    return-object v0
 .end method
