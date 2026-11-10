@@ -4,8 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: 'Direct URL to Melon APK (adkill preferred)'
+        description: 'Direct HTTP URL OR Google Drive file id'
         required: true
+        type: string
+      drive_file_id:
+        description: 'Optional Google Drive file ID (preferred over apk_url for Drive files)'
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -23,11 +28,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install tools
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq wget unzip zip 2>/dev/null || true
+          pip install -q gdown
           wget -q -O /usr/local/bin/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
           wget -q -O /usr/local/bin/apktool https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
           chmod +x /usr/local/bin/apktool
@@ -36,9 +46,24 @@ jobs:
       - name: Download APK
         run: |
           set -euo pipefail
-          curl -L --fail --retry 3 -o original.apk "${{ github.event.inputs.apk_url }}"
+          FILE_ID="${{ github.event.inputs.drive_file_id }}"
+          URL="${{ github.event.inputs.apk_url }}"
+          if [ -n "$FILE_ID" ]; then
+            echo "Downloading Drive file id=$FILE_ID via gdown"
+            gdown --fuzzy "https://drive.google.com/uc?id=${FILE_ID}" -O original.apk
+          elif echo "$URL" | grep -q "drive.google.com\|drive.usercontent"; then
+            echo "Downloading Drive URL via gdown"
+            gdown --fuzzy "$URL" -O original.apk
+          else
+            curl -L --fail --retry 3 -o original.apk "$URL"
+          fi
           ls -lh original.apk
+          SIZE=$(stat -c%s original.apk)
+          echo "size=$SIZE"
+          test "$SIZE" -gt 50000000 || { echo "APK too small - download failed"; head -c 200 original.apk; exit 1; }
           head -c 4 original.apk | od -A n -t x1
+          # must be ZIP/APK magic PK
+          head -c 2 original.apk | grep -q PK || { echo "not a zip/apk"; exit 1; }
 
       - name: Full Apktool decode
         run: |
