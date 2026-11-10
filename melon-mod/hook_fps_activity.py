@@ -22,12 +22,10 @@ for p in targets:
         hooked = True
         break
     pattern = re.compile(
-        r'(\.
-method\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
-        r'invoke-super\s+\{([^}]+)\},\s*L[^;]+;->onCreate\(Landroid/os/Bundle;\)V)',
+        r'(\x2emethod\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
+        r'invoke-super\s+\{([^}]+)\},\s*L[^;]+;->onCreate\(Landroid/os/Bundle;\)V)'.replace('\\x2e', '.'),
         re.M,
     )
-    # fix pattern - avoid broken newline
     pattern = re.compile(
         r'(\.method\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
         r'invoke-super\s+\{([^}]+)\},\s*L[^;]+;->onCreate\(Landroid/os/Bundle;\)V)',
@@ -38,7 +36,10 @@ method\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
         continue
     regs = m.group(2)
     this_reg = regs.split(',')[0].strip()
-    inject = f"\n    invoke-static {{{this_reg}}}, Lcom/studio27/melonmod/MelonFpsOverlay;->install(Landroid/app/Activity;)V\n"
+    inject = (
+        '\n    invoke-static {' + this_reg +
+        '}, Lcom/studio27/melonmod/MelonFpsOverlay;->install(Landroid/app/Activity;)V\n'
+    )
     t = t[: m.end()] + inject + t[m.end() :]
     p.write_text(t)
     print('hooked FPS into', p, 'reg', this_reg)
