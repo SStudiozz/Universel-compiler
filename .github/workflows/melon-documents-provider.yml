@@ -4,11 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       drive_file_id:
-        description: 'Google Drive file ID of Melon APK (adkill preferred)'
+        description: 'Google Drive file ID - use CLEAN original Melon APK'
         required: true
         type: string
       apk_url:
-        description: 'unused'
         required: false
         default: ''
         type: string
@@ -22,12 +21,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -43,61 +40,49 @@ jobs:
           chmod +x /usr/local/bin/apktool
           wget -q -O /tmp/uber-apk-signer.jar https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
 
-      - name: Download APK via gdown
+      - name: Download CLEAN Melon APK
         run: |
           set -euo pipefail
-          FILE_ID="${{ github.event.inputs.drive_file_id }}"
-          gdown "$FILE_ID" -O original.apk
+          gdown "${{ github.event.inputs.drive_file_id }}" -O original.apk
           ls -lh original.apk
-          SIZE=$(stat -c%s original.apk)
-          test "$SIZE" -gt 50000000 || exit 1
-          head -c 2 original.apk | cmp -n 2 - <(printf PK) || exit 1
+          test "$(stat -c%s original.apk)" -gt 50000000
+          head -c 2 original.apk | cmp -n 2 - <(printf PK)
 
       - name: Full Apktool decode
         run: |
           set -euo pipefail
           apktool d -f original.apk -o decoded
-          test -f decoded/AndroidManifest.xml
 
-      - name: Apply libil2cpp rewarded + interstitial policy
+      - name: Kill interstitials only (keep rewarded shop ads working)
         run: |
           set -euo pipefail
           python3 << 'PY'
           from pathlib import Path
           lib = Path('decoded/lib/arm64-v8a/libil2cpp.so')
-          if not lib.exists():
-              raise SystemExit(f'missing {lib}')
           data = bytearray(lib.read_bytes())
-          RET = bytes([0xC0,0x03,0x5F,0xD6])
-          TRUE = bytes([0x20,0x00,0x80,0x52, 0xC0,0x03,0x5F,0xD6])
-          shell = bytes.fromhex('2100805201e40039003c40f9400000b427b66814c0035fd6')
-          off_show = 0x203F998
-          off_avail = 0x203F4E4
-          for off in [0x203FED4, 0x203FEB0, 0x3925D20]:
-              if off+4 <= len(data):
-                  data[off:off+4] = RET
-                  print(f'RET interstitial @ {off:#x}')
-          data[off_avail:off_avail+8] = TRUE
-          print(f'isRewarded true @ {off_avail:#x}')
-          data[off_show:off_show+len(shell)] = shell
-          print(f'ShowRewarded shell @ {off_show:#x}')
-          for off in [0x392708C, 0x39279FC]:
-              if off+4 <= len(data):
-                  data[off:off+4] = RET
-                  print(f'RET MaxSdk rewarded @ {off:#x}')
+          RET = bytes([0xC0, 0x03, 0x5F, 0xD6])
+          for off, name in [
+              (0x203FED4, 'AdsManager.ShowInterstitial'),
+              (0x203FEB0, 'AdsManager.ShowAdWithDelay'),
+              (0x3925D20, 'MaxSdk.ShowInterstitial'),
+          ]:
+              data[off:off+4] = RET
+              print('RET', name, hex(off))
           lib.write_bytes(data)
-          print('libil2cpp patched', lib.stat().st_size)
+          print('shop rewarded ads left intact')
           PY
 
-      - name: Install DocumentsProvider smali
+      - name: Install real single-root DocumentsProvider
         run: |
           set -euo pipefail
           mkdir -p decoded/smali/com/studio27/melonmod
           cp melon-mod/smali/com/studio27/melonmod/MelonDocumentsProvider.smali \
              decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
-          grep -E "queryRoots|mPkg|mExt" decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali | head
+          ! grep -q "Melon App Data\|Melon Files (Saves" decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
+          grep -q "getExternalFilesDir" decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
+          echo "provider ok"
 
-      - name: Inject provider into AndroidManifest
+      - name: Inject provider manifest
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -120,23 +105,15 @@ jobs:
           )
           if "MelonDocumentsProvider" not in t:
               m = re.search(r"</application\s*>", t, flags=re.I)
-              if not m:
-                  raise SystemExit("no application end")
               t = t[:m.start()] + provider + "\n    " + t[m.start():]
               p.write_text(t, encoding="utf-8")
-          assert "MelonDocumentsProvider" in p.read_text(encoding="utf-8")
-          print("manifest OK")
+          print("manifest ok")
           PY
 
-      - name: Rebuild APK
+      - name: Rebuild and sign
         run: |
           set -euo pipefail
           apktool b decoded -o unsigned.apk
-          ls -lh unsigned.apk
-
-      - name: Sign APK
-        run: |
-          set -euo pipefail
           keytool -genkeypair -keystore debug.keystore -alias melonpoc \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
