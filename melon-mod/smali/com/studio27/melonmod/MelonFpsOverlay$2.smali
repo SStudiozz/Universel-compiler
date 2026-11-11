@@ -1,7 +1,7 @@
 .class Lcom/studio27/melonmod/MelonFpsOverlay$2;
 .super Ljava/lang/Object;
 .source "MelonFpsOverlay.java"
-.implements Ljava/lang/Runnable;
+.implements Landroid/view/Choreographer$FrameCallback;
 
 .method constructor <init>()V
     .registers 1
@@ -9,8 +9,8 @@
     return-void
 .end method
 
-.method public run()V
-    .registers 1
-    invoke-static {}, Lcom/studio27/melonmod/MelonFpsOverlay;->access$tick()V
+.method public doFrame(J)V
+    .registers 3
+    invoke-static {}, Lcom/studio27/melonmod/MelonFpsOverlay;->onFrame()V
     return-void
 .end method
