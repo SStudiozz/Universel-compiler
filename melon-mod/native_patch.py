@@ -14,6 +14,7 @@ for off, name in [
     data[off:off+4] = RET
     print('RET', name)
 
+# SetShake: still allow shake when force is high enough
 shake_off = 0x2108528
 chunk = bytes(data[shake_off:shake_off+0x40])
 seq = bytes.fromhex('6c00005441000037c0035fd6')
@@ -24,32 +25,13 @@ if idx >= 0:
 else:
     print('SetShake early-exit already gone')
 
-# Higher sensitivity: light hits should shake
+# Lower sensitivity: leave original force gates intact
+# (only solid hits trigger shake — light taps ignored)
 col_off = 0x21557C4
-data[col_off+0x10c:col_off+0x110] = NOP
-print('NOP force b.le +0x10c')
+print('force b.le +0x10c LEFT INTACT (lower sensitivity)')
+print('no extra gate NOPs')
 
-if data[col_off+0x114:col_off+0x118] == bytes.fromhex('340003c8'):
-    data[col_off+0x114:col_off+0x118] = NOP
-    print('NOP cbz +0x114')
-
-col = bytearray(data[col_off:col_off+0x200])
-for pat in [
-    bytes.fromhex('c8000037'),
-    bytes.fromhex('36000220'),
-    bytes.fromhex('36000120'),
-    bytes.fromhex('c8000035'),
-]:
-    i = 0x40
-    while True:
-        j = col.find(pat, i)
-        if j < 0 or j > 0x170:
-            break
-        col[j:j+4] = NOP
-        print(f'gate NOP +{j:x}')
-        i = j + 4
-data[col_off:col_off+0x200] = col
-
+# Slow-mo 0.15
 ts = 0x222DB88
 ss = 0x222DC2C
 region = bytes(data[ts:ts+0xA0])
