@@ -14,43 +14,13 @@ for off, name in [
     data[off:off+4] = RET
     print('RET', name)
 
-shake_off = 0x2108528
-chunk = bytes(data[shake_off:shake_off+0x40])
-seq = bytes.fromhex('6c00005441000037c0035fd6')
-idx = chunk.find(seq)
-if idx >= 0:
-    data[shake_off+idx:shake_off+idx+12] = NOP*3
-    print('SetShake early-exit NOP')
-else:
-    print('SetShake early-exit already gone')
+# SetShake LEFT ALONE (no early-exit NOP) — stops micro-shake spam
+print('SetShake untouched')
 
-# Middle: force limit ~12 (was 30). Codecave so fcmp+b.le still work.
+# Only the strict force compare branch — allows solid hits, not every nudge
 col_off = 0x21557C4
-cave = col_off + 0x1C0
-
-# +0x100: b cave (48 instructions forward)
-data[col_off+0x100:col_off+0x104] = struct.pack('<I', 0x14000000 | 48)
-
-# cave:
-#   movz w8,#0
-#   movk w8,#0x4140,lsl#16    ; 12.0f
-#   fmov s1,w8
-#   fcmp s0,s1
-#   b.le skip (+0x1d4)
-#   b +0x110                 ; continue past original compare
-cave_code = bytearray()
-cave_code += struct.pack('<I', 0x52800008)
-cave_code += struct.pack('<I', 0x72A41408)
-cave_code += struct.pack('<I', 0x1E270101)
-cave_code += struct.pack('<I', 0x1E202020)  # fcmp s0, s1
-# 5th insn at col+0x1d0: b.le to col+0x1d4 (imm19=1)
-cave_code += struct.pack('<I', 0x5400002D)
-# 6th insn at col+0x1d4: b to col+0x110
-# delta = 0x110 - 0x1d4 = -0xc4 bytes = -49 instructions
-imm26 = (-49) & 0x03FFFFFF
-cave_code += struct.pack('<I', 0x14000000 | imm26)
-data[cave:cave+len(cave_code)] = cave_code
-print('cave ok: limit 12.0f')
+data[col_off+0x10c:col_off+0x110] = NOP
+print('NOP force b.le +0x10c only')
 
 ts = 0x222DB88
 ss = 0x222DC2C
