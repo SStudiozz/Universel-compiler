@@ -11,6 +11,5 @@
 
 .method public run()V
     .registers 1
-    invoke-static {}, Lcom/studio27/melonmod/MelonFpsOverlay;->tick()V
     return-void
 .end method
