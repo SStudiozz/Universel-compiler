@@ -11,6 +11,6 @@
 
 .method public doFrame(J)V
     .registers 3
-    invoke-static {}, Lcom/studio27/melonmod/MelonFpsOverlay;->onFrame()V
+    invoke-static {p1, p2}, Lcom/studio27/melonmod/MelonFpsOverlay;->onFrame(J)V
     return-void
 .end method
