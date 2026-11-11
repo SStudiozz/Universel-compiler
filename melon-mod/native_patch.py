@@ -14,7 +14,7 @@ for off, name in [
     data[off:off+4] = RET
     print('RET', name)
 
-# Keep SetShake able to run (early-exit was hard-blocking)
+# SetShake early-exit — keep shake able to run
 shake_off = 0x2108528
 chunk = bytes(data[shake_off:shake_off+0x40])
 seq = bytes.fromhex('6c00005441000037c0035fd6')
@@ -25,10 +25,18 @@ if idx >= 0:
 else:
     print('SetShake early-exit already gone')
 
-# HEAVILY lower sensitivity: do NOT touch force gates.
-# Original collision force threshold stays — light moves will not shake.
+# True middle ground: keep the force gate, but lower limit 30 → 12.
+# Overwrite the 3 instructions before b.le with: load 12.0f into s1.
+# Force stays in s0 from earlier fabs/scale; b.le at +0x10c still filters.
 col_off = 0x21557C4
-print('force gates LEFT INTACT (heavy sensitivity decrease)')
+# 12.0f = 0x41400000
+code = bytearray()
+code += struct.pack('<I', 0x52800008)  # movz w8, #0
+code += struct.pack('<I', 0x72A28008)  # movk w8, #0x4140, lsl #16
+code += struct.pack('<I', 0x1E270101)  # fmov s1, w8
+data[col_off+0x100:col_off+0x10c] = code
+print('force limit -> 12.0f (gate kept)')
+# b.le at +0x10c left intact
 
 # Slow-mo 0.15
 ts = 0x222DB88
