@@ -6,11 +6,10 @@
 .field private static fpsText:Landroid/widget/TextView;
 .field private static checkBox:Landroid/widget/CheckBox;
 .field private static enabled:Z
-.field private static frames:I
-.field private static lastNs:J
+.field private static lastFrameNs:J
+.field private static smoothFps:F
 .field private static choreographer:Landroid/view/Choreographer;
 .field private static frameCallback:Landroid/view/Choreographer$FrameCallback;
-.field private static handler:Landroid/os/Handler;
 .field private static prefs:Landroid/content/SharedPreferences;
 
 .method private constructor <init>()V
@@ -20,7 +19,7 @@
 .end method
 
 .method public static install(Landroid/app/Activity;)V
-    .registers 9
+    .registers 8
     if-eqz p0, :done
 
     sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->overlay:Landroid/widget/LinearLayout;
@@ -108,11 +107,10 @@
     :try_end_0
     .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
 
+    const-wide/16 v0, 0x0
+    sput-wide v0, Lcom/studio27/melonmod/MelonFpsOverlay;->lastFrameNs:J
     const/4 v0, 0x0
-    sput v0, Lcom/studio27/melonmod/MelonFpsOverlay;->frames:I
-    invoke-static {}, Ljava/lang/System;->nanoTime()J
-    move-result-wide v0
-    sput-wide v0, Lcom/studio27/melonmod/MelonFpsOverlay;->lastNs:J
+    sput v0, Lcom/studio27/melonmod/MelonFpsOverlay;->smoothFps:F
 
     invoke-static {}, Landroid/view/Choreographer;->getInstance()Landroid/view/Choreographer;
     move-result-object v0
@@ -121,17 +119,6 @@
     invoke-direct {v1}, Lcom/studio27/melonmod/MelonFpsOverlay$2;-><init>()V
     sput-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->frameCallback:Landroid/view/Choreographer$FrameCallback;
     invoke-virtual {v0, v1}, Landroid/view/Choreographer;->postFrameCallback(Landroid/view/Choreographer$FrameCallback;)V
-
-    new-instance v0, Landroid/os/Handler;
-    invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
-    move-result-object v1
-    invoke-direct {v0, v1}, Landroid/os/Handler;-><init>(Landroid/os/Looper;)V
-    sput-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->handler:Landroid/os/Handler;
-    new-instance v1, Lcom/studio27/melonmod/MelonFpsOverlay$3;
-    invoke-direct {v1}, Lcom/studio27/melonmod/MelonFpsOverlay$3;-><init>()V
-    const-wide/16 v2, 0x190
-    invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
-
     goto :done
 
     :catch_0
@@ -143,11 +130,60 @@
     return-void
 .end method
 
-.method public static onFrame()V
-    .registers 2
-    sget v0, Lcom/studio27/melonmod/MelonFpsOverlay;->frames:I
-    add-int/lit8 v0, v0, 0x1
-    sput v0, Lcom/studio27/melonmod/MelonFpsOverlay;->frames:I
+.method public static onFrame(J)V
+    .registers 9
+    sget-wide v0, Lcom/studio27/melonmod/MelonFpsOverlay;->lastFrameNs:J
+    const-wide/16 v2, 0x0
+    cmp-long v4, v0, v2
+    if-nez v4, :save_only
+
+    sub-long v0, p0, v0
+    const-wide/32 v2, 0xf4240
+    cmp-long v4, v0, v2
+    if-gez v4, :reschedule
+    const-wide/32 v2, 0x3b9aca00
+    cmp-long v4, v0, v2
+    if-lez v4, :reschedule
+
+    long-to-float v0, v0
+    const v1, 0x4e6e6b28
+    div-float v0, v1, v0
+
+    sget v1, Lcom/studio27/melonmod/MelonFpsOverlay;->smoothFps:F
+    const v2, 0x3f59999a
+    mul-float/2addr v1, v2
+    const v2, 0x3e19999a
+    mul-float/2addr v0, v2
+    add-float/2addr v1, v0
+    sput v1, Lcom/studio27/melonmod/MelonFpsOverlay;->smoothFps:F
+
+    float-to-int v0, v1
+    const/4 v1, 0x1
+    if-ge v0, v1, :hi
+    const/4 v0, 0x1
+    :hi
+    const/16 v1, 0xf0
+    if-le v0, v1, :upd
+    const/16 v0, 0xf0
+
+    :upd
+    sget-boolean v1, Lcom/studio27/melonmod/MelonFpsOverlay;->enabled:Z
+    if-eqz v1, :save_only
+    sget-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->fpsText:Landroid/widget/TextView;
+    if-eqz v1, :save_only
+    new-instance v2, Ljava/lang/StringBuilder;
+    invoke-direct {v2}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-virtual {v2, v0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    const-string v0, " FPS"
+    invoke-virtual {v2, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v0
+    invoke-virtual {v1, v0}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+
+    :save_only
+    sput-wide p0, Lcom/studio27/melonmod/MelonFpsOverlay;->lastFrameNs:J
+
+    :reschedule
     sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->choreographer:Landroid/view/Choreographer;
     if-eqz v0, :done
     sget-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->frameCallback:Landroid/view/Choreographer$FrameCallback;
@@ -157,61 +193,8 @@
     return-void
 .end method
 
-.method public static tick()V
-    .registers 9
-    invoke-static {}, Ljava/lang/System;->nanoTime()J
-    move-result-wide v1
-    sget-wide v3, Lcom/studio27/melonmod/MelonFpsOverlay;->lastNs:J
-    sub-long v3, v1, v3
-    sget v0, Lcom/studio27/melonmod/MelonFpsOverlay;->frames:I
-    const-wide/32 v5, 0x5f5e100
-    cmp-long v7, v3, v5
-    if-gez v7, :reschedule
-    const-wide/16 v5, 0x1
-    cmp-long v7, v3, v5
-    if-gtz v7, :reschedule
-    long-to-float v3, v3
-    const v4, 0x4e6e6b28
-    div-float v3, v4, v3
-    int-to-float v0, v0
-    mul-float/2addr v0, v3
-    float-to-int v0, v0
-    const/4 v3, 0x0
-    if-ge v0, v3, :check_hi
-    const/4 v0, 0x0
-    :check_hi
-    const/16 v3, 0xf0
-    if-le v0, v3, :show
-    const/16 v0, 0xf0
-    :show
-    const/4 v3, 0x0
-    sput v3, Lcom/studio27/melonmod/MelonFpsOverlay;->frames:I
-    sput-wide v1, Lcom/studio27/melonmod/MelonFpsOverlay;->lastNs:J
-    sget-boolean v1, Lcom/studio27/melonmod/MelonFpsOverlay;->enabled:Z
-    if-eqz v1, :reschedule
-    sget-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->fpsText:Landroid/widget/TextView;
-    if-eqz v1, :reschedule
-    new-instance v2, Ljava/lang/StringBuilder;
-    invoke-direct {v2}, Ljava/lang/StringBuilder;-><init>()V
-    invoke-virtual {v2, v0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
-    const-string v0, " FPS"
-    invoke-virtual {v2, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-    move-result-object v0
-    invoke-virtual {v1, v0}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
-    :reschedule
-    sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->handler:Landroid/os/Handler;
-    if-eqz v0, :done
-    new-instance v1, Lcom/studio27/melonmod/MelonFpsOverlay$3;
-    invoke-direct {v1}, Lcom/studio27/melonmod/MelonFpsOverlay$3;-><init>()V
-    const-wide/16 v2, 0x190
-    invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
-    :done
-    return-void
-.end method
-
 .method static synthetic access$setEnabled(Z)V
-    .registers 4
+    .registers 3
     sput-boolean p0, Lcom/studio27/melonmod/MelonFpsOverlay;->enabled:Z
     sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->prefs:Landroid/content/SharedPreferences;
     if-eqz v0, :skip_save
@@ -227,10 +210,9 @@
     const/4 v1, 0x0
     invoke-virtual {v0, v1}, Landroid/widget/TextView;->setVisibility(I)V
     const/4 v1, 0x0
-    sput v1, Lcom/studio27/melonmod/MelonFpsOverlay;->frames:I
-    invoke-static {}, Ljava/lang/System;->nanoTime()J
-    move-result-wide v1
-    sput-wide v1, Lcom/studio27/melonmod/MelonFpsOverlay;->lastNs:J
+    sput v1, Lcom/studio27/melonmod/MelonFpsOverlay;->smoothFps:F
+    const-wide/16 v1, 0x0
+    sput-wide v1, Lcom/studio27/melonmod/MelonFpsOverlay;->lastFrameNs:J
     goto :done
     :hide
     const/16 v1, 0x8
