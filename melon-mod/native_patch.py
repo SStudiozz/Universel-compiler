@@ -5,12 +5,6 @@ libp = Path('decoded/lib/arm64-v8a/libil2cpp.so')
 data = bytearray(libp.read_bytes())
 BASE = 0x1000
 
-def va(o):
-    return o + BASE
-
-def enc_b(f, t):
-    return struct.pack('<I', 0x14000000 | (((t - f) // 4) & 0x3FFFFFF))
-
 RET = bytes([0xC0, 0x03, 0x5F, 0xD6])
 NOP = bytes.fromhex('1f2003d5')
 
@@ -35,86 +29,93 @@ else:
     print('SetShake early-exit already gone')
 
 # --- OnCollisionEnter2D (CollisionActivityChecker @ 0x21557C4) ---
-# Lower intensity to ~0.10f (mild) and remove force gates so light/medium hits also shake
+# Goal: light taps must also trigger shake. Aggressively kill force gates.
 col_off = 0x21557C4
 
-# Intensity 0.10f = 0x3dcccccd
-# movz w8, #0xcccd; movk w8, #0x3dcc, lsl #16; fmov s0, w8
+# 1) Force intensity ~0.12f (visible but not violent)
+# 0.12f = 0x3df5c28f
 load = bytearray()
-load += struct.pack('<I', 0x529999A8)  # movz w8, #0xcccd
-load += struct.pack('<I', 0x72A7B988)  # movk w8, #0x3dcc, lsl #16
+load += struct.pack('<I', 0x528851E8)  # movz w8, #0xc28f
+load += struct.pack('<I', 0x72A7BEA8)  # movk w8, #0x3df5, lsl #16
 load += struct.pack('<I', 0x1E270100)  # fmov s0, w8
-# Place before BL SetShake (around +0x188)
 data[col_off + 0x17c:col_off + 0x188] = load
-print('OnCollision intensity ~0.10f (mild)')
+print('OnCollision intensity ~0.12f')
 
-# NOP remaining force / skip gates (keep null-check CBNZs)
+# 2) Nuclear option on force gates: NOP a wide range of skip branches
+#    especially the fcmp + b.le at +0x100..+0x10c and later cbz/tbz
 col = bytearray(data[col_off:col_off + 0x200])
+
+# Explicitly kill the main force compare block (+0x100 to +0x114)
+for off in range(0x100, 0x118, 4):
+    col[off:off+4] = NOP
+print('NOP force-compare block +0x100..+0x114')
+
+# Broader pattern NOPs (skip anything that looks like a conditional exit)
 for pat in [
-    bytes.fromhex('c8000037'),  # tbnz weak skip
-    bytes.fromhex('5400064d'),  # b.le force compare
-    bytes.fromhex('340003c8'),  # cbz skip
+    bytes.fromhex('c8000037'),  # tbnz
+    bytes.fromhex('5400064d'),  # b.le
+    bytes.fromhex('5400040d'),  # b.le
+    bytes.fromhex('5400020d'),  # b.le
+    bytes.fromhex('340003c8'),  # cbz
+    bytes.fromhex('340002c8'),  # cbz
     bytes.fromhex('36000220'),  # tbz
     bytes.fromhex('36000120'),  # tbz
+    bytes.fromhex('36000200'),  # tbz
     bytes.fromhex('c8000035'),  # cbnz
-    bytes.fromhex('5400040d'),  # b.le
+    bytes.fromhex('35000069'),  # cbnz
+    bytes.fromhex('35000048'),  # cbnz
 ]:
-    i = 0
+    i = 0x20  # skip prologue null checks
     while True:
         j = col.find(pat, i)
-        if j < 0:
+        if j < 0 or j > 0x1b0:
             break
-        # Avoid null-check patterns near the start that protect against null camera
-        if j < 0x20:
-            i = j + 4
-            continue
-        col[j:j + 4] = NOP
-        print('collision gate NOP at', hex(col_off + j), pat.hex())
+        col[j:j+4] = NOP
+        print(f'gate NOP +{j:x} {pat.hex()}')
         i = j + 4
+
 data[col_off:col_off + 0x200] = col
 
-# Also try to lower the hard-coded COLLISION_FORCE_LIMIT comparison if present as float 30.0
-# 30.0f = 0x41f00000. Search in the method for the constant load.
-force_const = bytes.fromhex('0000f041')  # little-endian float 30.0
-idx = col.find(force_const)
-if idx >= 0:
-    # replace with 6.0f = 0x40c00000
-    col[idx:idx+4] = bytes.fromhex('0000c040')
-    data[col_off:col_off + 0x200] = col
-    print('lowered force limit constant 30 -> 6')
-else:
-    # try 0x41f00000 in other encodings / nearby
-    print('force limit const not found as plain float (ok)')
+# 3) Also try to smash any remaining 30.0f / high force constants in the method
+for const_hex, new_hex, name in [
+    ('0000f041', '00000040', '30.0 -> 2.0'),   # 30.0f -> 2.0f
+    ('0000a041', '00000040', '20.0 -> 2.0'),
+    ('00002041', '00000040', '10.0 -> 2.0'),
+]:
+    idx = 0
+    region = data[col_off:col_off+0x200]
+    while True:
+        j = region.find(bytes.fromhex(const_hex), idx)
+        if j < 0:
+            break
+        data[col_off+j:col_off+j+4] = bytes.fromhex(new_hex)
+        print(f'replaced {name} at +{j:x}')
+        idx = j + 4
 
-# --- Better slow-mo ---
-# Force slowMotionScale reads / setScale toward 0.15f for stronger, usable slow-mo
-# 0.15f = 0x3e19999a
-ts = 0x222DB88  # ToggleSlow
-ss = 0x222DC2C  # setScale
-
+# --- Better slow-mo (keep 0.15) ---
+ts = 0x222DB88
+ss = 0x222DC2C
 region = bytes(data[ts:ts + 0xA0])
 found_ldr = False
 for i in range(0, len(region) - 4, 4):
     w = int.from_bytes(region[i:i+4], 'little')
     if (w & 0xFFC00000) == 0xBD400000:
         imm = ((w >> 10) & 0xFFF) * 4
-        if imm == 0x28:  # field slowMotionScale
+        if imm == 0x28:
             rt = w & 0x1F
-            print(f'ToggleSlow +{i:02x}: ldr s{rt}, [x?, #0x28]')
             code = bytearray()
             code += struct.pack('<I', 0x52933348)  # movz w8, #0x999a
             code += struct.pack('<I', 0x72A7C328)  # movk w8, #0x3e19, lsl #16
-            code += struct.pack('<I', 0x1E270100 | rt)  # fmov s{rt}, w8
+            code += struct.pack('<I', 0x1E270100 | rt)
             data[ts + i:ts + i + 12] = code
             print('forced slowMotionScale -> 0.15f')
             found_ldr = True
             break
 if not found_ldr:
-    # Fallback: force arg of setScale
     code = bytearray()
-    code += struct.pack('<I', 0x52933348)  # movz w8, #0x999a
-    code += struct.pack('<I', 0x72A7C328)  # movk w8, #0x3e19, lsl #16
-    code += struct.pack('<I', 0x1E270100)  # fmov s0, w8
+    code += struct.pack('<I', 0x52933348)
+    code += struct.pack('<I', 0x72A7C328)
+    code += struct.pack('<I', 0x1E270100)
     data[ss + 0x10:ss + 0x1c] = code
     print('setScale forced toward 0.15f (fallback)')
 
