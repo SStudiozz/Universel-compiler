@@ -14,14 +14,44 @@ for off, name in [
     data[off:off+4] = RET
     print('RET', name)
 
-# SetShake LEFT ALONE (no early-exit NOP) — stops micro-shake spam
-print('SetShake untouched')
-
-# Only the strict force compare branch — allows solid hits, not every nudge
+# --- Shake: VALUES ONLY, no gate NOPs ---
+# Original COLLISION_FORCE_LIMIT = 30. Inject 12.0f via codecave.
+# Gates (fcmp / b.le / SetShake) stay intact.
 col_off = 0x21557C4
-data[col_off+0x10c:col_off+0x110] = NOP
-print('NOP force b.le +0x10c only')
+cave = col_off + 0x1C0
 
+# Replace original fcmp at +0x108 with: b cave
+# (48 instr forward from +0x108 to +0x1c0: (0x1c0-0x108)/4 = 46)
+data[col_off+0x108:col_off+0x10c] = struct.pack('<I', 0x14000000 | 46)
+print('hook fcmp -> b cave')
+
+# Cave:
+#   movz w8, #0
+#   movk w8, #0x4140, lsl #16   ; 12.0f = 0x41400000
+#   fmov s1, w8
+#   fcmp s0, s1
+#   b.le skip   ; original skip target = col+0x1d4
+#   b +0x10c    ; back to original b.le site — but that was our hook.
+#              ; continue at +0x10c would re-hit. Go to +0x110 instead.
+cave_code = bytearray()
+cave_code += struct.pack('<I', 0x52800008)  # movz w8, #0
+cave_code += struct.pack('<I', 0x72A41408)  # movk w8, #0x4140, lsl #16
+cave_code += struct.pack('<I', 0x1E270101)  # fmov s1, w8
+cave_code += struct.pack('<I', 0x1E202020)  # fcmp s0, s1
+
+# 5th insn at col+0x1d0: b.le to original skip col+0x1d4
+# From +0x1d0 to +0x1d4 = +4 bytes = imm19=1, cond=LE(0xD)
+cave_code += struct.pack('<I', 0x5400002D)
+
+# 6th insn at col+0x1d4: b continue at col+0x110 (shouldShake check)
+# delta = 0x110 - 0x1d4 = -0xc4 bytes = -49 instrs
+imm26 = (-49) & 0x03FFFFFF
+cave_code += struct.pack('<I', 0x14000000 | imm26)
+
+data[cave:cave+len(cave_code)] = cave_code
+print('cave: force limit 12.0f (gates intact)')
+
+# Slow-mo 0.15
 ts = 0x222DB88
 ss = 0x222DC2C
 region = bytes(data[ts:ts+0xA0])
@@ -50,5 +80,6 @@ if not found:
 
 print('NO coin patch')
 print('NO fps')
+print('NO gate NOPs')
 libp.write_bytes(data)
 print('native_patch done')
