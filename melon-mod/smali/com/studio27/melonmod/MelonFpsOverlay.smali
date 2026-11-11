@@ -26,7 +26,6 @@
     sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->overlay:Landroid/widget/LinearLayout;
     if-nez v0, :done
 
-    # Load saved preference
     const-string v0, "melon_mod_prefs"
     const/4 v1, 0x0
     invoke-virtual {p0, v0, v1}, Landroid/app/Activity;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
@@ -51,7 +50,6 @@
     const/high16 v1, 0x41200000
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setElevation(F)V
 
-    # Compact "FPS" checkbox (acts as the setting until full Unity UI injection)
     new-instance v1, Landroid/widget/CheckBox;
     invoke-direct {v1, p0}, Landroid/widget/CheckBox;-><init>(Landroid/content/Context;)V
     sput-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->checkBox:Landroid/widget/CheckBox;
@@ -71,13 +69,12 @@
     new-instance v1, Landroid/widget/TextView;
     invoke-direct {v1, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
     sput-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->fpsText:Landroid/widget/TextView;
-    const-string v3, ""
+    const-string v3, "--"
     invoke-virtual {v1, v3}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
     const/4 v3, -0x1
     invoke-virtual {v1, v3}, Landroid/widget/TextView;->setTextColor(I)V
     const/high16 v3, 0x41600000
     invoke-virtual {v1, v3}, Landroid/widget/TextView;->setTextSize(F)V
-    # Start hidden unless already enabled from prefs
     sget-boolean v3, Lcom/studio27/melonmod/MelonFpsOverlay;->enabled:Z
     if-eqz v3, :hide_text
     const/4 v3, 0x0
@@ -91,7 +88,6 @@
     invoke-virtual {v1, v3, v4, v4, v4}, Landroid/widget/TextView;->setPadding(IIII)V
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
 
-    # True top-left, tight to edge
     new-instance v1, Landroid/widget/FrameLayout$LayoutParams;
     const/4 v3, -0x2
     invoke-direct {v1, v3, v3}, Landroid/widget/FrameLayout$LayoutParams;-><init>(II)V
@@ -126,16 +122,11 @@
     sput-object v1, Lcom/studio27/melonmod/MelonFpsOverlay;->frameCallback:Landroid/view/Choreographer$FrameCallback;
     invoke-virtual {v0, v1}, Landroid/view/Choreographer;->postFrameCallback(Landroid/view/Choreographer$FrameCallback;)V
 
-    # Safety Handler so FPS never stays stuck at 0
     new-instance v0, Landroid/os/Handler;
     invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
     move-result-object v1
     invoke-direct {v0, v1}, Landroid/os/Handler;-><init>(Landroid/os/Looper;)V
     sput-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->handler:Landroid/os/Handler;
-    new-instance v1, Lcom/studio27/melonmod/MelonFpsOverlay$3;
-    invoke-direct {v1}, Lcom/studio27/melonmod/MelonFpsOverlay$3;-><init>()V
-    const-wide/16 v2, 0x1f4
-    invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
 
     goto :done
 
@@ -158,9 +149,14 @@
     move-result-wide v1
     sget-wide v3, Lcom/studio27/melonmod/MelonFpsOverlay;->lastNs:J
     sub-long v3, v1, v3
+
     const-wide/32 v5, 0x1dcd6500
     cmp-long v7, v3, v5
     if-ltz v7, :reschedule
+
+    const-wide/16 v5, 0x1
+    cmp-long v7, v3, v5
+    if-gtz v7, :reschedule
 
     long-to-float v3, v3
     const v4, 0x4e6e6b28
@@ -168,13 +164,14 @@
     int-to-float v0, v0
     mul-float/2addr v0, v3
     float-to-int v0, v0
-    if-ltz v0, :zero
-    const/16 v3, 0x3e8
+
+    const/4 v3, 0x1
+    if-ge v0, v3, :check_hi
+    const/4 v0, 0x1
+    :check_hi
+    const/16 v3, 0xf0
     if-le v0, v3, :show
-    const/16 v0, 0x3e8
-    goto :show
-    :zero
-    const/4 v0, 0x0
+    const/16 v0, 0xf0
 
     :show
     const/4 v3, 0x0
@@ -205,24 +202,10 @@
     return-void
 .end method
 
-.method public static tick()V
-    .registers 4
-    invoke-static {}, Lcom/studio27/melonmod/MelonFpsOverlay;->onFrame()V
-    sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->handler:Landroid/os/Handler;
-    if-eqz v0, :done
-    new-instance v1, Lcom/studio27/melonmod/MelonFpsOverlay$3;
-    invoke-direct {v1}, Lcom/studio27/melonmod/MelonFpsOverlay$3;-><init>()V
-    const-wide/16 v2, 0x1f4
-    invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
-    :done
-    return-void
-.end method
-
 .method static synthetic access$setEnabled(Z)V
     .registers 4
     sput-boolean p0, Lcom/studio27/melonmod/MelonFpsOverlay;->enabled:Z
 
-    # Persist
     sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->prefs:Landroid/content/SharedPreferences;
     if-eqz v0, :skip_save
     invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
@@ -253,7 +236,6 @@
 .method public static setEnabled(Z)V
     .registers 2
     invoke-static {p0}, Lcom/studio27/melonmod/MelonFpsOverlay;->access$setEnabled(Z)V
-    # Keep checkbox in sync if present
     sget-object v0, Lcom/studio27/melonmod/MelonFpsOverlay;->checkBox:Landroid/widget/CheckBox;
     if-eqz v0, :done
     invoke-virtual {v0, p0}, Landroid/widget/CheckBox;->setChecked(Z)V
