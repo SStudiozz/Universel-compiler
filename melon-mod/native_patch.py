@@ -14,7 +14,7 @@ for off, name in [
     data[off:off+4] = RET
     print('RET', name)
 
-# SetShake early-exit — keep so shake can fire
+# Keep SetShake able to run (early-exit was hard-blocking)
 shake_off = 0x2108528
 chunk = bytes(data[shake_off:shake_off+0x40])
 seq = bytes.fromhex('6c00005441000037c0035fd6')
@@ -25,12 +25,10 @@ if idx >= 0:
 else:
     print('SetShake early-exit already gone')
 
-# MIDDLE GROUND:
-# Only remove the strictest force compare (b.le at +0x10c).
-# Leave every other gate alone so random light physics does not spam shake.
+# HEAVILY lower sensitivity: do NOT touch force gates.
+# Original collision force threshold stays — light moves will not shake.
 col_off = 0x21557C4
-data[col_off+0x10c:col_off+0x110] = NOP
-print('NOP main force b.le +0x10c only (middle sensitivity)')
+print('force gates LEFT INTACT (heavy sensitivity decrease)')
 
 # Slow-mo 0.15
 ts = 0x222DB88
