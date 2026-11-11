@@ -72,12 +72,13 @@ jobs:
           set -euo pipefail
           python3 melon-mod/native_patch.py
 
-      - name: Install smali mods
+      - name: Install DocumentsProvider only (no FPS)
         run: |
           set -euo pipefail
           mkdir -p decoded/smali/com/studio27/melonmod
-          cp melon-mod/smali/com/studio27/melonmod/*.smali decoded/smali/com/studio27/melonmod/
-          python3 melon-mod/hook_fps_activity.py
+          cp melon-mod/smali/com/studio27/melonmod/MelonDocumentsProvider.smali \
+             decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
+          echo "DocumentsProvider installed; FPS skipped"
 
       - name: Inject provider manifest
         run: |
