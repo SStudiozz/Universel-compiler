@@ -5,16 +5,9 @@ libp = Path('decoded/lib/arm64-v8a/libil2cpp.so')
 data = bytearray(libp.read_bytes())
 BASE = 0x1000
 
-def va(o):
-    return o + BASE
-
-def enc_b(f, t):
-    return struct.pack('<I', 0x14000000 | (((t - f) // 4) & 0x3FFFFFF))
-
 RET = bytes([0xC0, 0x03, 0x5F, 0xD6])
 NOP = bytes.fromhex('1f2003d5')
 
-# --- Kill interstitials only ---
 for off, name in [
     (0x203FED4, 'ShowInterstitial'),
     (0x203FEB0, 'ShowAdWithDelay'),
@@ -23,40 +16,68 @@ for off, name in [
     data[off:off + 4] = RET
     print('RET', name)
 
-# --- SetShake: keep original logic, only NOP early-exit that skips weak shakes ---
 shake_off = 0x2108528
 chunk = bytes(data[shake_off:shake_off + 0x40])
 seq = bytes.fromhex('6c00005441000037c0035fd6')
 idx = chunk.find(seq)
 if idx >= 0:
     data[shake_off + idx:shake_off + idx + 12] = NOP * 3
-    print('SetShake early-exit NOP (keep original intensity path)')
+    print('SetShake early-exit NOP')
 else:
-    print('SetShake early-exit already patched or missing')
+    print('SetShake early-exit already gone')
 
-# --- OnCollisionEnter2D: force intensity 0.6f right before BL SetShake ---
 col_off = 0x21557C4
-print('OnCollision pre-SetShake:', data[col_off+0x170:col_off+0x190].hex())
+load = bytearray()
+load += struct.pack('<I', 0x52800008)
+load += struct.pack('<I', 0x72A7D008)
+load += struct.pack('<I', 0x1E270100)
+data[col_off + 0x17c:col_off + 0x188] = load
+print('OnCollision intensity 0.25f')
 
-# 0.6f = 0x3f19999a
-load06 = bytearray()
-load06 += struct.pack('<I', 0x52933348)  # movz w8, #0x999a
-load06 += struct.pack('<I', 0x72A7E328)  # movk w8, #0x3f19, lsl #16
-load06 += struct.pack('<I', 0x1E270100)  # fmov s0, w8
-# Put at +0x17c (12 bytes), BL SetShake stays at +0x188
-data[col_off + 0x17c:col_off + 0x188] = load06
-print('OnCollision force intensity 0.6f before SetShake')
-
-# Lower collision force gate (weak-skip only)
 col = bytearray(data[col_off:col_off + 0x200])
-for pat in [bytes.fromhex('c8000037')]:
-    i = col.find(pat)
-    if i >= 0:
-        col[i:i+4] = NOP
-        print('collision weak-gate NOP at', hex(col_off + i))
+for pat in [
+    bytes.fromhex('c8000037'),
+    bytes.fromhex('5400064d'),
+    bytes.fromhex('340003c8'),
+    bytes.fromhex('36000220'),
+    bytes.fromhex('36000120'),
+]:
+    i = 0
+    while True:
+        j = col.find(pat, i)
+        if j < 0:
+            break
+        col[j:j + 4] = NOP
+        print('collision gate NOP at', hex(col_off + j))
+        i = j + 4
 data[col_off:col_off + 0x200] = col
 
-print('DealDamage left original (shake via collision path at 0.6)')
+ss = 0x222DC2C
+ts = 0x222DB88
+region = bytes(data[ts:ts + 0xA0])
+found_ldr = False
+for i in range(0, len(region) - 4, 4):
+    w = int.from_bytes(region[i:i+4], 'little')
+    if (w & 0xFFC00000) == 0xBD400000:
+        imm = ((w >> 10) & 0xFFF) * 4
+        if imm == 0x28:
+            rt = w & 0x1F
+            code = bytearray()
+            code += struct.pack('<I', 0x529999A8)
+            code += struct.pack('<I', 0x72A7C988)
+            code += struct.pack('<I', 0x1E270100 | rt)
+            data[ts + i:ts + i + 12] = code
+            print('forced slowMotionScale read -> 0.2f')
+            found_ldr = True
+            break
+if not found_ldr:
+    code = bytearray()
+    code += struct.pack('<I', 0x529999A8)
+    code += struct.pack('<I', 0x72A7C988)
+    code += struct.pack('<I', 0x1E270100)
+    data[ss + 0x10:ss + 0x1c] = code
+    print('setScale forced arg toward 0.2f (fallback)')
+
 libp.write_bytes(data)
 print('NO coin patch')
 print('native_patch done')
