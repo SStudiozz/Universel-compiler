@@ -1,91 +1,168 @@
 /*
- * libmelonres — ScalableBufferManager.ResizeBuffers via JNI (once per call).
- * Uses Il2CppDumper Offset (file offset), NOT RVA.
+ * libmelonres.so
+ * - Resolution: ScalableBufferManager.ResizeBuffers
+ * - Limb strength: hook Joint2D.set_breakForce / set_breakTorque (*1.3125)
+ *
+ * Trampolines live in THIS .so. Only a 4-byte branch is written into
+ * libil2cpp (via mprotect) — no codecaves over random game code.
  */
+#define _GNU_SOURCE
 #include <jni.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/mman.h>
 #include <android/log.h>
 
 #define LOG_TAG "MelonRes"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-/* dump.cs: Offset: 0x43C5904  RVA: 0x43C6904 — use FILE OFFSET */
-#define RESIZE_BUFFERS_FILE_OFF 0x43C5904u
+#define RESIZE_BUFFERS_OFF   0x43C5904u
+#define SET_BREAK_FORCE_OFF  0x4448A24u
+#define SET_BREAK_TORQUE_OFF 0x4448A70u
 
 typedef void (*ResizeBuffers_fn)(float, float);
 
-static ResizeBuffers_fn resolve_resize(void) {
-    static ResizeBuffers_fn cached = NULL;
-    static int tried = 0;
-    if (tried)
-        return cached;
-    tried = 1;
+static ResizeBuffers_fn g_resize = NULL;
+static uintptr_t g_il2cpp_file_off_base = 0;
+static int g_mapped = 0;
 
+static int resolve_il2cpp_map(void) {
+    if (g_mapped)
+        return 1;
     FILE *f = fopen("/proc/self/maps", "r");
-    if (!f) {
-        LOGE("maps open failed");
-        return NULL;
-    }
-
+    if (!f)
+        return 0;
     char line[768];
     while (fgets(line, sizeof(line), f)) {
         if (!strstr(line, "libil2cpp.so"))
             continue;
         if (!strstr(line, "r-x"))
             continue;
-
         unsigned long start = 0, end = 0, offset = 0;
         if (sscanf(line, "%lx-%lx %*s %lx", &start, &end, &offset) != 3)
             continue;
-
-        if (RESIZE_BUFFERS_FILE_OFF < offset)
-            continue;
-        if (end <= start)
-            continue;
-        unsigned long map_span = end - start;
-        if (RESIZE_BUFFERS_FILE_OFF - offset >= map_span)
-            continue;
-
-        uintptr_t addr = (uintptr_t)start + (RESIZE_BUFFERS_FILE_OFF - (uintptr_t)offset);
-        cached = (ResizeBuffers_fn)addr;
-        LOGI("ResizeBuffers @ %p (map %lx-%lx file_off %lx)",
-             (void *)addr, start, end, offset);
-        break;
+        if (SET_BREAK_FORCE_OFF >= offset &&
+            SET_BREAK_FORCE_OFF < offset + (end - start)) {
+            g_il2cpp_file_off_base = (uintptr_t)start - (uintptr_t)offset;
+            g_mapped = 1;
+            LOGI("il2cpp r-x %lx-%lx base=%lx", start, end,
+                 (unsigned long)g_il2cpp_file_off_base);
+            break;
+        }
+        if (!g_mapped) {
+            g_il2cpp_file_off_base = (uintptr_t)start - (uintptr_t)offset;
+            g_mapped = 1;
+        }
     }
     fclose(f);
+    return g_mapped;
+}
 
-    if (!cached)
-        LOGE("resolve ResizeBuffers failed — check maps");
-    return cached;
+static void *addr_from_file_off(uint32_t file_off) {
+    if (!resolve_il2cpp_map())
+        return NULL;
+    return (void *)(g_il2cpp_file_off_base + file_off);
+}
+
+static int make_writable(void *addr, size_t len) {
+    uintptr_t page = (uintptr_t)addr & ~0xFFFul;
+    uintptr_t end = ((uintptr_t)addr + len + 0xFFF) & ~0xFFFul;
+    return mprotect((void *)page, end - page, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+}
+
+static ResizeBuffers_fn resolve_resize(void) {
+    if (g_resize)
+        return g_resize;
+    g_resize = (ResizeBuffers_fn)addr_from_file_off(RESIZE_BUFFERS_OFF);
+    if (g_resize)
+        LOGI("ResizeBuffers @ %p", (void *)g_resize);
+    else
+        LOGE("ResizeBuffers resolve failed");
+    return g_resize;
 }
 
 JNIEXPORT void JNICALL
 Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz, jfloat scale) {
     (void)env;
     (void)clazz;
-
-    if (scale < 0.01f)
-        scale = 0.01f;
-    if (scale > 1.0f)
-        scale = 1.0f;
-
+    if (scale < 0.01f) scale = 0.01f;
+    if (scale > 1.0f) scale = 1.0f;
     ResizeBuffers_fn fn = resolve_resize();
     if (!fn) {
-        LOGE("nativeApply: no fn");
+        LOGE("nativeApply: no ResizeBuffers");
         return;
     }
-
     LOGI("nativeApply scale=%.3f", (double)scale);
     fn(scale, scale);
     LOGI("nativeApply done");
 }
 
+static uint8_t g_tramp_force[32] __attribute__((aligned(16)));
+static uint8_t g_tramp_torque[32] __attribute__((aligned(16)));
+
+static uint32_t enc_b(int32_t imm26) {
+    return 0x14000000u | ((uint32_t)imm26 & 0x03FFFFFFu);
+}
+static uint32_t enc_fmov_s1_13125(void) {
+    return (0x1E27D001u & ~0x001FE000u & ~0x1Fu) | 1u | (0x75u << 13);
+}
+static uint32_t enc_fmul_s0_s0_s1(void) {
+    return 0x1E210800u;
+}
+
+static void install_mul_hook(uint32_t file_off, uint8_t *tramp, const char *name) {
+    void *target = addr_from_file_off(file_off);
+    if (!target) {
+        LOGE("%s: resolve failed", name);
+        return;
+    }
+    uint32_t *t = (uint32_t *)target;
+    uint32_t stolen = t[0];
+    void *ret = (void *)(t + 1);
+
+    uint32_t *tp = (uint32_t *)tramp;
+    tp[0] = enc_fmov_s1_13125();
+    tp[1] = enc_fmul_s0_s0_s1();
+    tp[2] = stolen;
+    {
+        intptr_t delta = (uint8_t *)ret - (uint8_t *)&tp[3];
+        tp[3] = enc_b((int32_t)(delta / 4));
+    }
+
+    if (!make_writable(tramp, 32)) {
+        LOGE("%s: tramp mprotect failed", name);
+        return;
+    }
+    if (!make_writable(target, 8)) {
+        LOGE("%s: target mprotect failed", name);
+        return;
+    }
+    {
+        intptr_t delta = tramp - (uint8_t *)target;
+        t[0] = enc_b((int32_t)(delta / 4));
+        __builtin___clear_cache((char *)target, (char *)target + 4);
+        __builtin___clear_cache((char *)tramp, (char *)tramp + 16);
+    }
+    LOGI("%s hooked @ %p tramp %p (*1.3125)", name, target, tramp);
+}
+
+static void install_limb_hooks(void) {
+    if (!resolve_il2cpp_map()) {
+        LOGE("limb hooks: no il2cpp map");
+        return;
+    }
+    install_mul_hook(SET_BREAK_FORCE_OFF, g_tramp_force, "set_breakForce");
+    install_mul_hook(SET_BREAK_TORQUE_OFF, g_tramp_torque, "set_breakTorque");
+}
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)vm;
     (void)reserved;
-    LOGI("libmelonres loaded (file_off=0x%X)", RESIZE_BUFFERS_FILE_OFF);
+    LOGI("libmelonres loaded");
+    install_limb_hooks();
     return JNI_VERSION_1_6;
 }
