@@ -60,7 +60,6 @@ jobs:
           fi
           ls -lh original.apk
           test "$(stat -c%s original.apk)" -gt 50000000
-          head -c 4 original.apk | od -An -tx1
 
       - name: Full Apktool decode
         run: |
@@ -72,13 +71,15 @@ jobs:
           set -euo pipefail
           python3 melon-mod/native_patch.py
 
-      - name: Install DocumentsProvider only (no FPS)
+      - name: Install smali mods
         run: |
           set -euo pipefail
           mkdir -p decoded/smali/com/studio27/melonmod
-          cp melon-mod/smali/com/studio27/melonmod/MelonDocumentsProvider.smali \
-             decoded/smali/com/studio27/melonmod/MelonDocumentsProvider.smali
-          echo "DocumentsProvider installed; FPS skipped"
+          cp melon-mod/smali/com/studio27/melonmod/MelonDocumentsProvider.smali decoded/smali/com/studio27/melonmod/
+          cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay.smali decoded/smali/com/studio27/melonmod/
+          cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay\$1.smali decoded/smali/com/studio27/melonmod/
+          python3 melon-mod/hook_fps_activity.py
+          echo "DocumentsProvider + ResOverlay installed"
 
       - name: Inject provider manifest
         run: |
