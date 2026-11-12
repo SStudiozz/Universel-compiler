@@ -16,10 +16,9 @@ for off, name in [
 col_off = 0x21557C4
 
 def fmov_s1_imm(imm8):
-    # Known-good template: fmov s1, #30.0 was 0x1e27d001 (imm8=0x3e)
     return (0x1E27D001 & ~0x001FE000) | ((imm8 & 0xFF) << 13)
 
-# Force limit 30 -> 6.0 (imm8 0x3e -> 0x18)
+# Force limit 30 -> 6.0
 insn_off = col_off + 0x104
 old = int.from_bytes(data[insn_off:insn_off+4], 'little')
 if ((old >> 5) & 0xFF) == 0x80 and (old & 31) == 1:
@@ -29,13 +28,8 @@ if ((old >> 5) & 0xFF) == 0x80 and (old & 31) == 1:
 else:
     print(f'WARNING force fmov {old:08x}')
 
-# Intensity: replace ldr s1,[x8,#424] (0.1) with fmov s1, #0.25
-inten_off = col_off + 0x174
-old_i = int.from_bytes(data[inten_off:inten_off+4], 'little')
-print(f'intensity site was {old_i:08x}')
-inten_insn = fmov_s1_imm(0x50)  # 0.25
-data[inten_off:inten_off+4] = struct.pack('<I', inten_insn)
-print(f'intensity -> 0.25  {inten_insn:08x}')
+# Intensity: leave original ldr (vanilla ~0.10) — do NOT overwrite
+print('intensity left at vanilla ~0.10 (no patch)')
 
 print('NO slow-mo patch')
 print('NO gate NOPs')
