@@ -69,13 +69,12 @@ static int mprotect_rwx(void *addr, size_t len) {
 }
 
 static void write_abs_jump(uint32_t *dst, void *target) {
-    dst[0] = 0x58000050u; /* LDR X16, #8 */
-    dst[1] = 0xD61F0200u; /* BR X16 */
+    dst[0] = 0x58000050u;
+    dst[1] = 0xD61F0200u;
     uint64_t t = (uint64_t)(uintptr_t)target;
     memcpy(&dst[2], &t, 8);
 }
 
-/* ---- resolution ---- */
 JNIEXPORT void JNICALL
 Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz, jfloat scale) {
     (void)env; (void)clazz;
@@ -90,12 +89,11 @@ Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz
     if (srs) { srs(scale); LOGI("SetRenderScale ok"); }
 }
 
-/* ---- limbs: restore / call / re-patch (ADRP-safe) ---- */
 static void call_orig(unsigned file_off, uint32_t *saved, void *hook, void *thiz, float value) {
     void *target = at_off(file_off);
     if (!target) return;
     uint32_t *t = (uint32_t *)target;
-    if (mprotect_rwx(target, 16) != 0) return
+    if (mprotect_rwx(target, 16) != 0) return;
     memcpy(t, saved, 16);
     __builtin___clear_cache((char *)t, (char *)t + 16);
 
