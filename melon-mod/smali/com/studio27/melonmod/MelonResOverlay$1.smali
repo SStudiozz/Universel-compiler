@@ -16,11 +16,11 @@
 .end method
 
 .method public onStartTrackingTouch(Landroid/widget/SeekBar;)V
-    .registers 1
+    .registers 2
     return-void
 .end method
 
 .method public onStopTrackingTouch(Landroid/widget/SeekBar;)V
-    .registers 1
+    .registers 2
     return-void
 .end method
