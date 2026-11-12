@@ -1,10 +1,8 @@
 /*
  * libmelonres.so
- * - Resolution: ScalableBufferManager.ResizeBuffers
- * - Limb strength: hook Joint2D.set_breakForce / set_breakTorque (*1.3125)
- *
- * Trampolines live in THIS .so. Only a 4-byte branch is written into
- * libil2cpp (via mprotect) — no codecaves over random game code.
+ * - Resolution: ResizeBuffers
+ * - Limbs: set_breakForce / set_breakTorque * 1.3125
+ * Absolute LDR+BR hooks (works across .so mapping distance).
  */
 #define _GNU_SOURCE
 #include <jni.h>
@@ -101,18 +99,9 @@ Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz
     LOGI("nativeApply done");
 }
 
-static uint8_t g_tramp_force[32] __attribute__((aligned(16)));
-static uint8_t g_tramp_torque[32] __attribute__((aligned(16)));
-
-static uint32_t enc_b(int32_t imm26) {
-    return 0x14000000u | ((uint32_t)imm26 & 0x03FFFFFFu);
-}
-static uint32_t enc_fmov_s1_13125(void) {
-    return (0x1E27D001u & ~0x001FE000u & ~0x1Fu) | 1u | (0x75u << 13);
-}
-static uint32_t enc_fmul_s0_s0_s1(void) {
-    return 0x1E210800u;
-}
+/* 16-byte abs jump at target + trampoline with *1.3125 on s0 */
+static uint8_t g_tramp_force[64] __attribute__((aligned(16)));
+static uint8_t g_tramp_torque[64] __attribute__((aligned(16)));
 
 static void install_mul_hook(uint32_t file_off, uint8_t *tramp, const char *name) {
     void *target = addr_from_file_off(file_off);
@@ -121,32 +110,41 @@ static void install_mul_hook(uint32_t file_off, uint8_t *tramp, const char *name
         return;
     }
     uint32_t *t = (uint32_t *)target;
-    uint32_t stolen = t[0];
-    void *ret = (void *)(t + 1);
+    /* steal 16 bytes (4 insns) */
+    uint32_t s0 = t[0], s1 = t[1], s2 = t[2], s3 = t[3];
+    void *resume = (void *)(t + 4);
 
+    /* trampoline */
     uint32_t *tp = (uint32_t *)tramp;
-    tp[0] = enc_fmov_s1_13125();
-    tp[1] = enc_fmul_s0_s0_s1();
-    tp[2] = stolen;
-    {
-        intptr_t delta = (uint8_t *)ret - (uint8_t *)&tp[3];
-        tp[3] = enc_b((int32_t)(delta / 4));
-    }
+    int i = 0;
+    /* fmov s1, #1.3125 */
+    tp[i++] = (0x1E27D001u & ~0x001FE000u & ~0x1Fu) | 1u | (0x75u << 13);
+    /* fmul s0, s0, s1 */
+    tp[i++] = 0x1E210800u;
+    tp[i++] = s0;
+    tp[i++] = s1;
+    tp[i++] = s2;
+    tp[i++] = s3;
+    /* ldr x16, #8 ; br x16 ; .quad resume */
+    tp[i++] = 0x58000050u; /* ldr x16, #8 */
+    tp[i++] = 0xD61F0200u; /* br x16 */
+    memcpy(&tp[i], &resume, 8);
 
-    if (!make_writable(tramp, 32)) {
+    if (!make_writable(tramp, 64)) {
         LOGE("%s: tramp mprotect failed", name);
         return;
     }
-    if (!make_writable(target, 8)) {
+    if (!make_writable(target, 16)) {
         LOGE("%s: target mprotect failed", name);
         return;
     }
-    {
-        intptr_t delta = tramp - (uint8_t *)target;
-        t[0] = enc_b((int32_t)(delta / 4));
-        __builtin___clear_cache((char *)target, (char *)target + 4);
-        __builtin___clear_cache((char *)tramp, (char *)tramp + 16);
-    }
+    /* at target: ldr x16, #8 ; br x16 ; .quad tramp */
+    t[0] = 0x58000050u;
+    t[1] = 0xD61F0200u;
+    memcpy(&t[2], &tramp, 8);
+
+    __builtin___clear_cache((char *)target, (char *)target + 16);
+    __builtin___clear_cache((char *)tramp, (char *)tramp + 64);
     LOGI("%s hooked @ %p tramp %p (*1.3125)", name, target, tramp);
 }
 
