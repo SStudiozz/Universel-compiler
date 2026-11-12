@@ -61,20 +61,18 @@
     new-instance v1, Landroid/widget/SeekBar;
     invoke-direct {v1, p0}, Landroid/widget/SeekBar;-><init>(Landroid/content/Context;)V
     sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->seek:Landroid/widget/SeekBar;
-    const/16 v2, 0x32
+    const/16 v2, 0x64
     invoke-virtual {v1, v2}, Landroid/widget/SeekBar;->setMax(I)V
     sget v2, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     const/high16 v3, 0x42c80000
     mul-float/2addr v2, v3
-    const/high16 v3, 0x42480000
-    sub-float/2addr v2, v3
     float-to-int v2, v2
-    if-gez v2, :clip_hi
-    const/4 v2, 0x0
-    :clip_hi
-    const/16 v3, 0x32
+    if-lez v2, :pmin
+    const/4 v2, 0x1
+    :pmin
+    const/16 v3, 0x64
     if-le v2, v3, :set_prog
-    const/16 v2, 0x32
+    const/16 v2, 0x64
     :set_prog
     invoke-virtual {v1, v2}, Landroid/widget/SeekBar;->setProgress(I)V
     new-instance v2, Lcom/studio27/melonmod/MelonResOverlay$1;
@@ -166,11 +164,16 @@
 
 .method public static setScaleFromProgress(I)V
     .registers 4
+    if-lez p0, :one
+    const/4 p0, 0x1
+    :one
+    const/16 v0, 0x64
+    if-le p0, v0, :ok
+    const/16 p0, 0x64
+    :ok
     int-to-float v0, p0
     const/high16 v1, 0x42c80000
     div-float/2addr v0, v1
-    const/high16 v1, 0x3f000000
-    add-float/2addr v0, v1
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->updateLabel()V
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->writeScaleFile()V
