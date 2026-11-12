@@ -81,6 +81,14 @@
     invoke-direct {v1}, Lcom/studio27/melonmod/MelonResOverlay$2;-><init>()V
     const-wide/16 v2, 0x7d0
     invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
+    new-instance v1, Lcom/studio27/melonmod/MelonResOverlay$2;
+    invoke-direct {v1}, Lcom/studio27/melonmod/MelonResOverlay$2;-><init>()V
+    const-wide/16 v2, 0xfa0
+    invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
+    new-instance v1, Lcom/studio27/melonmod/MelonResOverlay$2;
+    invoke-direct {v1}, Lcom/studio27/melonmod/MelonResOverlay$2;-><init>()V
+    const-wide/16 v2, 0x1770
+    invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
 
     new-instance v0, Landroid/widget/LinearLayout;
     invoke-direct {v0, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V
