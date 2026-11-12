@@ -1,15 +1,13 @@
 /*
- * libmelonres.so
- * - Resolution: ResizeBuffers
- * - Limbs: set_breakForce / set_breakTorque * 1.3125
- * Absolute LDR+BR hooks (works across .so mapping distance).
+ * libmelonres
+ * - Resolution: ResizeBuffers + URP SetRenderScale
+ * - Limbs: set_breakForce / set_breakTorque * 1.30
+ *   (restore-call-rehook: ADRP-safe, no il2cpp cave overwrite)
  */
-#define _GNU_SOURCE
 #include <jni.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <android/log.h>
@@ -18,148 +16,132 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-#define RESIZE_BUFFERS_OFF   0x43C5904u
-#define SET_BREAK_FORCE_OFF  0x4448A24u
-#define SET_BREAK_TORQUE_OFF 0x4448A70u
+#define OFF_RESIZE_BUFFERS   0x43C5904u
+#define OFF_SET_RENDER_SCALE 0x41B9584u
+#define OFF_SET_BREAK_FORCE  0x4448A24u
+#define OFF_SET_BREAK_TORQUE 0x4448A70u
+#define LIMB_MUL 1.30f
 
 typedef void (*ResizeBuffers_fn)(float, float);
+typedef void (*SetRenderScale_fn)(float);
+typedef void (*BreakSet_fn)(void *thiz, float value);
 
-static ResizeBuffers_fn g_resize = NULL;
-static uintptr_t g_il2cpp_file_off_base = 0;
-static int g_mapped = 0;
+static uintptr_t g_rx_start;
+static uintptr_t g_rx_file_off;
+static int g_maps_ok;
+static int g_hooks_ok;
+static uint32_t g_saved_force[4];
+static uint32_t g_saved_torque[4];
 
-static int resolve_il2cpp_map(void) {
-    if (g_mapped)
-        return 1;
+static int parse_maps(void) {
+    if (g_maps_ok) return 1;
     FILE *f = fopen("/proc/self/maps", "r");
-    if (!f)
-        return 0;
+    if (!f) return 0;
     char line[768];
     while (fgets(line, sizeof(line), f)) {
-        if (!strstr(line, "libil2cpp.so"))
-            continue;
-        if (!strstr(line, "r-x"))
-            continue;
+        if (!strstr(line, "libil2cpp.so")) continue;
+        if (!strstr(line, "r-x")) continue;
         unsigned long start = 0, end = 0, offset = 0;
         if (sscanf(line, "%lx-%lx %*s %lx", &start, &end, &offset) != 3)
             continue;
-        if (SET_BREAK_FORCE_OFF >= offset &&
-            SET_BREAK_FORCE_OFF < offset + (end - start)) {
-            g_il2cpp_file_off_base = (uintptr_t)start - (uintptr_t)offset;
-            g_mapped = 1;
-            LOGI("il2cpp r-x %lx-%lx base=%lx", start, end,
-                 (unsigned long)g_il2cpp_file_off_base);
-            break;
-        }
-        if (!g_mapped) {
-            g_il2cpp_file_off_base = (uintptr_t)start - (uintptr_t)offset;
-            g_mapped = 1;
-        }
+        if (OFF_SET_BREAK_FORCE < offset) continue;
+        if (OFF_SET_BREAK_FORCE - offset >= (end - start)) continue;
+        g_rx_start = (uintptr_t)start;
+        g_rx_file_off = (uintptr_t)offset;
+        g_maps_ok = 1;
+        LOGI("il2cpp RX %lx-%lx off=%lx", start, end, offset);
+        break;
     }
     fclose(f);
-    return g_mapped;
+    return g_maps_ok;
 }
 
-static void *addr_from_file_off(uint32_t file_off) {
-    if (!resolve_il2cpp_map())
-        return NULL;
-    return (void *)(g_il2cpp_file_off_base + file_off);
+static void *at_off(unsigned file_off) {
+    if (!parse_maps()) return NULL;
+    if (file_off < g_rx_file_off) return NULL;
+    return (void *)(g_rx_start + (file_off - g_rx_file_off));
 }
 
-static int make_writable(void *addr, size_t len) {
-    uintptr_t page = (uintptr_t)addr & ~0xFFFul;
-    uintptr_t end = ((uintptr_t)addr + len + 0xFFF) & ~0xFFFul;
-    return mprotect((void *)page, end - page, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+static int mprotect_rwx(void *addr, size_t len) {
+    uintptr_t page = (uintptr_t)addr & ~((uintptr_t)0xFFF);
+    size_t span = ((uintptr_t)addr + len + 0xFFF) - page;
+    return mprotect((void *)page, span, PROT_READ | PROT_WRITE | PROT_EXEC);
 }
 
-static ResizeBuffers_fn resolve_resize(void) {
-    if (g_resize)
-        return g_resize;
-    g_resize = (ResizeBuffers_fn)addr_from_file_off(RESIZE_BUFFERS_OFF);
-    if (g_resize)
-        LOGI("ResizeBuffers @ %p", (void *)g_resize);
-    else
-        LOGE("ResizeBuffers resolve failed");
-    return g_resize;
+static void write_abs_jump(uint32_t *dst, void *target) {
+    dst[0] = 0x58000050u; /* LDR X16, #8 */
+    dst[1] = 0xD61F0200u; /* BR X16 */
+    uint64_t t = (uint64_t)(uintptr_t)target;
+    memcpy(&dst[2], &t, 8);
 }
 
+/* ---- resolution ---- */
 JNIEXPORT void JNICALL
 Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz, jfloat scale) {
-    (void)env;
-    (void)clazz;
+    (void)env; (void)clazz;
     if (scale < 0.01f) scale = 0.01f;
     if (scale > 1.0f) scale = 1.0f;
-    ResizeBuffers_fn fn = resolve_resize();
-    if (!fn) {
-        LOGE("nativeApply: no ResizeBuffers");
-        return;
-    }
-    LOGI("nativeApply scale=%.3f", (double)scale);
-    fn(scale, scale);
-    LOGI("nativeApply done");
+
+    ResizeBuffers_fn rb = (ResizeBuffers_fn)at_off(OFF_RESIZE_BUFFERS);
+    SetRenderScale_fn srs = (SetRenderScale_fn)at_off(OFF_SET_RENDER_SCALE);
+    LOGI("nativeApply %.3f rb=%p srs=%p", (double)scale, (void *)rb, (void *)srs);
+
+    if (rb) { rb(scale, scale); LOGI("ResizeBuffers ok"); }
+    if (srs) { srs(scale); LOGI("SetRenderScale ok"); }
 }
 
-/* 16-byte abs jump at target + trampoline with *1.3125 on s0 */
-static uint8_t g_tramp_force[64] __attribute__((aligned(16)));
-static uint8_t g_tramp_torque[64] __attribute__((aligned(16)));
-
-static void install_mul_hook(uint32_t file_off, uint8_t *tramp, const char *name) {
-    void *target = addr_from_file_off(file_off);
-    if (!target) {
-        LOGE("%s: resolve failed", name);
-        return;
-    }
+/* ---- limbs: restore / call / re-patch (ADRP-safe) ---- */
+static void call_orig(unsigned file_off, uint32_t *saved, void *hook, void *thiz, float value) {
+    void *target = at_off(file_off);
+    if (!target) return;
     uint32_t *t = (uint32_t *)target;
-    /* steal 16 bytes (4 insns) */
-    uint32_t s0 = t[0], s1 = t[1], s2 = t[2], s3 = t[3];
-    void *resume = (void *)(t + 4);
+    if (mprotect_rwx(target, 16) != 0) return
+    memcpy(t, saved, 16);
+    __builtin___clear_cache((char *)t, (char *)t + 16);
 
-    /* trampoline */
-    uint32_t *tp = (uint32_t *)tramp;
-    int i = 0;
-    /* fmov s1, #1.3125 */
-    tp[i++] = (0x1E27D001u & ~0x001FE000u & ~0x1Fu) | 1u | (0x75u << 13);
-    /* fmul s0, s0, s1 */
-    tp[i++] = 0x1E210800u;
-    tp[i++] = s0;
-    tp[i++] = s1;
-    tp[i++] = s2;
-    tp[i++] = s3;
-    /* ldr x16, #8 ; br x16 ; .quad resume */
-    tp[i++] = 0x58000050u; /* ldr x16, #8 */
-    tp[i++] = 0xD61F0200u; /* br x16 */
-    memcpy(&tp[i], &resume, 8);
+    ((BreakSet_fn)target)(thiz, value);
 
-    if (!make_writable(tramp, 64)) {
-        LOGE("%s: tramp mprotect failed", name);
-        return;
-    }
-    if (!make_writable(target, 16)) {
-        LOGE("%s: target mprotect failed", name);
-        return;
-    }
-    /* at target: ldr x16, #8 ; br x16 ; .quad tramp */
-    t[0] = 0x58000050u;
-    t[1] = 0xD61F0200u;
-    memcpy(&t[2], &tramp, 8);
+    write_abs_jump(t, hook);
+    __builtin___clear_cache((char *)t, (char *)t + 16);
+}
 
-    __builtin___clear_cache((char *)target, (char *)target + 16);
-    __builtin___clear_cache((char *)tramp, (char *)tramp + 64);
-    LOGI("%s hooked @ %p tramp %p (*1.3125)", name, target, tramp);
+static void hooked_force(void *thiz, float value) {
+    call_orig(OFF_SET_BREAK_FORCE, g_saved_force, (void *)hooked_force, thiz, value * LIMB_MUL);
+}
+static void hooked_torque(void *thiz, float value) {
+    call_orig(OFF_SET_BREAK_TORQUE, g_saved_torque, (void *)hooked_torque, thiz, value * LIMB_MUL);
 }
 
 static void install_limb_hooks(void) {
-    if (!resolve_il2cpp_map()) {
-        LOGE("limb hooks: no il2cpp map");
+    if (g_hooks_ok) return;
+    void *f = at_off(OFF_SET_BREAK_FORCE);
+    void *q = at_off(OFF_SET_BREAK_TORQUE);
+    if (!f || !q) {
+        LOGE("limb resolve failed f=%p q=%p", f, q);
         return;
     }
-    install_mul_hook(SET_BREAK_FORCE_OFF, g_tramp_force, "set_breakForce");
-    install_mul_hook(SET_BREAK_TORQUE_OFF, g_tramp_torque, "set_breakTorque");
+    memcpy(g_saved_force, f, 16);
+    memcpy(g_saved_torque, q, 16);
+    if (mprotect_rwx(f, 16) || mprotect_rwx(q, 16)) {
+        LOGE("limb mprotect failed");
+        return;
+    }
+    write_abs_jump((uint32_t *)f, (void *)hooked_force);
+    write_abs_jump((uint32_t *)q, (void *)hooked_torque);
+    __builtin___clear_cache((char *)f, (char *)f + 16);
+    __builtin___clear_cache((char *)q, (char *)q + 16);
+    g_hooks_ok = 1;
+    LOGI("limb hooks *%.2f installed", (double)LIMB_MUL);
+}
+
+JNIEXPORT void JNICALL
+Java_com_studio27_melonmod_MelonResOverlay_nativeInitLimbs(JNIEnv *env, jclass clazz) {
+    (void)env; (void)clazz;
+    install_limb_hooks();
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
-    (void)vm;
-    (void)reserved;
+    (void)vm; (void)reserved;
     LOGI("libmelonres loaded");
     install_limb_hooks();
     return JNI_VERSION_1_6;
