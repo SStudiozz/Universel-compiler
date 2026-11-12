@@ -22,5 +22,6 @@
 
 .method public onStopTrackingTouch(Landroid/widget/SeekBar;)V
     .registers 2
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->writeScaleFile()V
     return-void
 .end method
