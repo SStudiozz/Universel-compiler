@@ -30,6 +30,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+          add-to-path: true
 
       - name: Install tools
         run: |
@@ -48,10 +53,8 @@ jobs:
           URL="${{ github.event.inputs.apk_url }}"
           FID="${{ github.event.inputs.drive_file_id }}"
           if [ -n "$URL" ]; then
-            echo "Downloading from apk_url..."
             wget -q -O original.apk "$URL" || curl -L --fail -o original.apk "$URL"
           elif [ -n "$FID" ]; then
-            echo "Downloading from Drive id $FID..."
             gdown --fuzzy "https://drive.google.com/uc?id=${FID}" -O original.apk \
               || gdown "$FID" -O original.apk \
               || gdown "https://drive.google.com/file/d/${FID}/view" -O original.apk
@@ -66,10 +69,21 @@ jobs:
           set -euo pipefail
           apktool d -f original.apk -o decoded
 
-      - name: Native patches
+      - name: Native IL2CPP patches
         run: |
           set -euo pipefail
           python3 melon-mod/native_patch.py
+
+      - name: Build libmelonres.so (JNI resolution)
+        run: |
+          set -euo pipefail
+          NDK="${{ steps.setup-ndk.outputs.ndk-path }}"
+          CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          "$CC" -shared -fPIC -O2 -o libmelonres.so melon-mod/jni/melonres.c -llog
+          ls -la libmelonres.so
+          mkdir -p decoded/lib/arm64-v8a
+          cp libmelonres.so decoded/lib/arm64-v8a/libmelonres.so
+          echo "libmelonres.so installed"
 
       - name: Install smali mods
         run: |
@@ -78,6 +92,7 @@ jobs:
           cp melon-mod/smali/com/studio27/melonmod/MelonDocumentsProvider.smali decoded/smali/com/studio27/melonmod/
           cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay.smali decoded/smali/com/studio27/melonmod/
           cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay\$1.smali decoded/smali/com/studio27/melonmod/
+          cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay\$2.smali decoded/smali/com/studio27/melonmod/
           python3 melon-mod/hook_fps_activity.py
           echo "DocumentsProvider + ResOverlay installed"
 
