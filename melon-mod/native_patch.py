@@ -25,10 +25,10 @@ if ((old >> 5) & 0xFF) != 0x80 or (old & 31) != 1:
 else:
     imm8_old = (old >> 13) & 0xFF
     print(f'old imm8={imm8_old:#x}')
-    imm8_new = 0x24  # 10.0 — a bit more sensitive than 12
+    imm8_new = 0x20  # 8.0
     new = (old & ~0x001FE000) | (imm8_new << 13)
     data[insn_off:insn_off+4] = struct.pack('<I', new)
-    print(f'new insn @ +0x104: {new:08x}  imm8={imm8_new:#x} (10.0)')
+    print(f'new insn @ +0x104: {new:08x}  imm8={imm8_new:#x} (8.0)')
 
 print('NO slow-mo patch')
 print('NO gate NOPs')
