@@ -19,6 +19,9 @@
 .method public static native nativeApply(F)V
 .end method
 
+.method public static native nativeInitLimbs()V
+.end method
+
 .method public static ensureLib()V
     .registers 1
     sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
@@ -26,6 +29,7 @@
     :try_start_0
     const-string v0, "melonres"
     invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->nativeInitLimbs()V
     const/4 v0, 0x1
     sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
     :try_end_0
