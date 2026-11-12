@@ -2,12 +2,9 @@ from pathlib import Path
 import re
 
 targets = []
-# Prefer exact UnityPlayerActivity
 for p in Path('decoded').rglob('*.smali'):
     if p.name == 'UnityPlayerActivity.smali' or 'UnityPlayerActivity' in str(p):
         targets.append(p)
-
-# Fallback: any Activity that mentions UnityPlayer
 if not targets:
     for p in Path('decoded').rglob('*Activity*.smali'):
         t = p.read_text(errors='ignore')
@@ -18,13 +15,17 @@ print('candidates', [str(p) for p in targets[:12]])
 hooked = 0
 for p in targets:
     t = p.read_text(errors='ignore')
-    if 'MelonFpsOverlay' in t:
+    if 'MelonResOverlay' in t:
         print('already hooked', p)
         hooked += 1
         continue
-
+    t = re.sub(
+        r'\n\s*# Melon FPS overlay\n\s*invoke-static \{[^}]+\}, Lcom/studio27/melonmod/MelonFpsOverlay;->install\(Landroid/app/Activity;\)V\n',
+        '\n',
+        t,
+    )
     pattern = re.compile(
-        r'(\.method\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
+        r'(\.(?:method)\s+(?:public|protected)\s+onCreate\(Landroid/os/Bundle;\)V[\s\S]*?'
         r'invoke-super\s+\{([^}]+)\},\s*L[^;]+;->onCreate\(Landroid/os/Bundle;\)V)',
         re.M,
     )
@@ -32,19 +33,18 @@ for p in targets:
     if not m:
         print('no onCreate match in', p)
         continue
-
     regs = m.group(2)
     this_reg = regs.split(',')[0].strip()
     inject = (
-        f"\n\n    # Melon FPS overlay\n"
-        f"    invoke-static {{{this_reg}}}, Lcom/studio27/melonmod/MelonFpsOverlay;->install(Landroid/app/Activity;)V\n"
+        f"\n\n    # Melon resolution overlay\n"
+        f"    invoke-static {{{this_reg}}}, Lcom/studio27/melonmod/MelonResOverlay;->install(Landroid/app/Activity;)V\n"
     )
     t = t[: m.end()] + inject + t[m.end() :]
     p.write_text(t)
-    print('hooked FPS into', p, 'reg', this_reg)
+    print('hooked Res into', p, 'reg', this_reg)
     hooked += 1
 
 if hooked == 0:
-    print('WARNING: could not hook FPS overlay into any activity')
+    print('WARNING: could not hook Res overlay')
 else:
-    print(f'FPS hook ok ({hooked} files)')
+    print(f'Res hook ok ({hooked} files)')
