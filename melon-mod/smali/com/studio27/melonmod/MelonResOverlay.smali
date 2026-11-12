@@ -7,6 +7,7 @@
 .field private static seek:Landroid/widget/SeekBar;
 .field private static prefs:Landroid/content/SharedPreferences;
 .field private static scale:F
+.field private static appCtx:Landroid/content/Context;
 
 .method private constructor <init>()V
     .registers 1
@@ -20,6 +21,10 @@
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
     if-nez v0, :done
 
+    invoke-virtual {p0}, Landroid/app/Activity;->getApplicationContext()Landroid/content/Context;
+    move-result-object v0
+    sput-object v0, Lcom/studio27/melonmod/MelonResOverlay;->appCtx:Landroid/content/Context;
+
     const-string v0, "melon_mod_prefs"
     const/4 v1, 0x0
     invoke-virtual {p0, v0, v1}, Landroid/app/Activity;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
@@ -30,6 +35,7 @@
     invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getFloat(Ljava/lang/String;F)F
     move-result v0
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->writeScaleFile()V
 
     new-instance v0, Landroid/widget/LinearLayout;
     invoke-direct {v0, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V
@@ -109,6 +115,33 @@
     return-void
 .end method
 
+.method public static writeScaleFile()V
+    .registers 5
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->appCtx:Landroid/content/Context;
+    if-eqz v0, :done
+    :try_start_0
+    invoke-virtual {v0}, Landroid/content/Context;->getFilesDir()Ljava/io/File;
+    move-result-object v0
+    new-instance v1, Ljava/io/File;
+    const-string v2, "melon_rscale"
+    invoke-direct {v1, v0, v2}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
+    new-instance v0, Ljava/io/FileOutputStream;
+    invoke-direct {v0, v1}, Ljava/io/FileOutputStream;-><init>(Ljava/io/File;)V
+    new-instance v1, Ljava/io/DataOutputStream;
+    invoke-direct {v1, v0}, Ljava/io/DataOutputStream;-><init>(Ljava/io/OutputStream;)V
+    sget v2, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
+    invoke-virtual {v1, v2}, Ljava/io/DataOutputStream;->writeFloat(F)V
+    invoke-virtual {v1}, Ljava/io/DataOutputStream;->flush()V
+    invoke-virtual {v1}, Ljava/io/DataOutputStream;->close()V
+    :try_end_0
+    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
+    goto :done
+    :catch_0
+    move-exception v0
+    :done
+    return-void
+.end method
+
 .method public static updateLabel()V
     .registers 4
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->label:Landroid/widget/TextView;
@@ -140,6 +173,7 @@
     add-float/2addr v0, v1
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->updateLabel()V
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->writeScaleFile()V
     sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
     if-eqz v1, :done
     invoke-interface {v1}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
