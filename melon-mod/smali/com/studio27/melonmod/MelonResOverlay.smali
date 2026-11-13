@@ -8,6 +8,7 @@
 .field private static prefs:Landroid/content/SharedPreferences;
 .field private static scale:F
 .field private static appCtx:Landroid/content/Context;
+.field private static activity:Landroid/app/Activity;
 .field private static libLoaded:Z
 
 .method private constructor <init>()V
@@ -43,14 +44,96 @@
     return-void
 .end method
 
+.method public static applySurfaceScale()V
+    .registers 8
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
+    if-eqz v0, :done
+    :try_start_0
+    const v1, 0x1020002
+    invoke-virtual {v0, v1}, Landroid/app/Activity;->findViewById(I)Landroid/view/View;
+    move-result-object v0
+    check-cast v0, Landroid/view/ViewGroup;
+    if-eqz v0, :done
+    invoke-static {v0}, Lcom/studio27/melonmod/MelonResOverlay;->findSurfaceView(Landroid/view/View;)Landroid/view/SurfaceView;
+    move-result-object v1
+    if-eqz v1, :done
+    invoke-virtual {v1}, Landroid/view/SurfaceView;->getWidth()I
+    move-result v2
+    invoke-virtual {v1}, Landroid/view/SurfaceView;->getHeight()I
+    move-result v3
+    if-lez v2, :done
+    if-lez v3, :done
+    invoke-virtual {v1}, Landroid/view/SurfaceView;->getHolder()Landroid/view/SurfaceHolder;
+    move-result-object v4
+    sget v5, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
+    const v6, 0x3f7d70a4
+    cmpl-float v6, v5, v6
+    if-ltz v6, :fixed
+    invoke-interface {v4}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
+    goto :done
+    :fixed
+    int-to-float v6, v2
+    mul-float/2addr v6, v5
+    float-to-int v6, v6
+    int-to-float v7, v3
+    mul-float/2addr v7, v5
+    float-to-int v7, v7
+    const/16 v2, 0x40
+    if-ge v6, v2, :okw
+    const/16 v6, 0x40
+    :okw
+    if-ge v7, v2, :okh
+    const/16 v7, 0x40
+    :okh
+    invoke-interface {v4, v6, v7}, Landroid/view/SurfaceHolder;->setFixedSize(II)V
+    :try_end_0
+    .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
+    goto :done
+    :catch_0
+    move-exception v0
+    :done
+    return-void
+.end method
+
+.method private static findSurfaceView(Landroid/view/View;)Landroid/view/SurfaceView;
+    .registers 5
+    if-eqz p0, :none
+    instance-of v0, p0, Landroid/view/SurfaceView;
+    if-eqz v0, :not_sv
+    check-cast p0, Landroid/view/SurfaceView;
+    return-object p0
+    :not_sv
+    instance-of v0, p0, Landroid/view/ViewGroup;
+    if-eqz v0, :none
+    check-cast p0, Landroid/view/ViewGroup;
+    invoke-virtual {p0}, Landroid/view/ViewGroup;->getChildCount()I
+    move-result v0
+    const/4 v1, 0x0
+    :loop
+    if-ge v1, v0, :none
+    invoke-virtual {p0, v1}, Landroid/view/ViewGroup;->getChildAt(I)Landroid/view/View;
+    move-result-object v2
+    invoke-static {v2}, Lcom/studio27/melonmod/MelonResOverlay;->findSurfaceView(Landroid/view/View;)Landroid/view/SurfaceView;
+    move-result-object v2
+    if-eqz v2, :next
+    return-object v2
+    :next
+    add-int/lit8 v1, v1, 0x1
+    goto :loop
+    :none
+    const/4 v0, 0x0
+    return-object v0
+.end method
+
 .method public static applyNow()V
     .registers 1
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
     sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
-    if-eqz v0, :done
+    if-eqz v0, :surface
     sget v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     invoke-static {v0}, Lcom/studio27/melonmod/MelonResOverlay;->nativeApply(F)V
-    :done
+    :surface
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->applySurfaceScale()V
     return-void
 .end method
 
@@ -59,6 +142,8 @@
     if-eqz p0, :done
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
     if-nez v0, :done
+
+    sput-object p0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
 
     invoke-virtual {p0}, Landroid/app/Activity;->getApplicationContext()Landroid/content/Context;
     move-result-object v0
