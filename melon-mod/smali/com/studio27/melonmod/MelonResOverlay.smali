@@ -10,6 +10,8 @@
 .field private static appCtx:Landroid/content/Context;
 .field private static activity:Landroid/app/Activity;
 .field private static libLoaded:Z
+.field private static baseW:I
+.field private static baseH:I
 
 .method private constructor <init>()V
     .registers 1
@@ -45,7 +47,7 @@
 .end method
 
 .method public static applySurfaceScale()V
-    .registers 8
+    .registers 9
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
     if-eqz v0, :done
     :try_start_0
@@ -63,26 +65,37 @@
     move-result v3
     if-lez v2, :done
     if-lez v3, :done
+    # Capture native layout size once (never shrink base)
+    sget v4, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    if-lez v4, :have_base
+    sput v2, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sput v3, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
+    :have_base
+    sget v2, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sget v3, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
     invoke-virtual {v1}, Landroid/view/SurfaceView;->getHolder()Landroid/view/SurfaceHolder;
     move-result-object v4
     sget v5, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     const v6, 0x3f7d70a4
     cmpl-float v6, v5, v6
-    if-ltz v6, :fixed
+    if-ltz v6, :do_fixed
+    # 100%: back to full layout size
     invoke-interface {v4}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
     goto :done
-    :fixed
+    :do_fixed
+    # Reset then apply new size so Android accepts changes
+    invoke-interface {v4}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
     int-to-float v6, v2
     mul-float/2addr v6, v5
     float-to-int v6, v6
     int-to-float v7, v3
     mul-float/2addr v7, v5
     float-to-int v7, v7
-    const/16 v2, 0x40
-    if-ge v6, v2, :okw
+    const/16 v8, 0x40
+    if-ge v6, v8, :okw
     const/16 v6, 0x40
     :okw
-    if-ge v7, v2, :okh
+    if-ge v7, v8, :okh
     const/16 v7, 0x40
     :okh
     invoke-interface {v4, v6, v7}, Landroid/view/SurfaceHolder;->setFixedSize(II)V
@@ -144,6 +157,9 @@
     if-nez v0, :done
 
     sput-object p0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
+    const/4 v0, 0x0
+    sput v0, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sput v0, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
 
     invoke-virtual {p0}, Landroid/app/Activity;->getApplicationContext()Landroid/content/Context;
     move-result-object v0
