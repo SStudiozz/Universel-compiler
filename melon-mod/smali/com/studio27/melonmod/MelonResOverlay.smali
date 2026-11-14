@@ -112,7 +112,6 @@
     if-ge v7, v8, :okh
     const/16 v7, 0x40
     :okh
-    # Direct setFixedSize from stable DisplayMetrics base — no spam
     invoke-interface {v4, v6, v7}, Landroid/view/SurfaceHolder;->setFixedSize(II)V
     :try_end_0
     .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
@@ -337,7 +336,7 @@
 .end method
 
 .method public static setScaleFromProgress(I)V
-    .registers 3
+    .registers 4
     if-lez p0, :one
     const/4 p0, 0x1
     :one
@@ -359,7 +358,6 @@
     invoke-interface {v1, v2, v0}, Landroid/content/SharedPreferences$Editor;->putFloat(Ljava/lang/String;F)Landroid/content/SharedPreferences$Editor;
     invoke-interface {v1}, Landroid/content/SharedPreferences$Editor;->apply()V
     :done
-    # Do NOT apply surface here — only on finger-up (onStopTrackingTouch)
     return-void
 .end method
 
