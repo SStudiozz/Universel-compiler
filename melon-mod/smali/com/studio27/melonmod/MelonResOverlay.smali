@@ -46,11 +46,42 @@
     return-void
 .end method
 
+.method public static ensureBaseSize()V
+    .registers 3
+    sget v0, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    if-lez v0, :done
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
+    if-eqz v0, :done
+    :try_start_0
+    invoke-virtual {v0}, Landroid/app/Activity;->getResources()Landroid/content/res/Resources;
+    move-result-object v0
+    invoke-virtual {v0}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
+    move-result-object v0
+    iget v1, v0, Landroid/util/DisplayMetrics;->widthPixels:I
+    iget v2, v0, Landroid/util/DisplayMetrics;->heightPixels:I
+    if-lez v1, :done
+    if-lez v2, :done
+    sput v1, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sput v2, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
+    :try_end_0
+    .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
+    goto :done
+    :catch_0
+    move-exception v0
+    :done
+    return-void
+.end method
+
 .method public static applySurfaceScale()V
     .registers 9
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
     if-eqz v0, :done
     :try_start_0
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureBaseSize()V
+    sget v2, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sget v3, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
+    if-lez v2, :done
+    if-lez v3, :done
     const v1, 0x1020002
     invoke-virtual {v0, v1}, Landroid/app/Activity;->findViewById(I)Landroid/view/View;
     move-result-object v0
@@ -59,32 +90,15 @@
     invoke-static {v0}, Lcom/studio27/melonmod/MelonResOverlay;->findSurfaceView(Landroid/view/View;)Landroid/view/SurfaceView;
     move-result-object v1
     if-eqz v1, :done
-    invoke-virtual {v1}, Landroid/view/SurfaceView;->getWidth()I
-    move-result v2
-    invoke-virtual {v1}, Landroid/view/SurfaceView;->getHeight()I
-    move-result v3
-    if-lez v2, :done
-    if-lez v3, :done
-    # Capture native layout size once (never shrink base)
-    sget v4, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
-    if-lez v4, :have_base
-    sput v2, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
-    sput v3, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
-    :have_base
-    sget v2, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
-    sget v3, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
     invoke-virtual {v1}, Landroid/view/SurfaceView;->getHolder()Landroid/view/SurfaceHolder;
     move-result-object v4
     sget v5, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     const v6, 0x3f7d70a4
     cmpl-float v6, v5, v6
     if-ltz v6, :do_fixed
-    # 100%: back to full layout size
     invoke-interface {v4}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
     goto :done
     :do_fixed
-    # Reset then apply new size so Android accepts changes
-    invoke-interface {v4}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
     int-to-float v6, v2
     mul-float/2addr v6, v5
     float-to-int v6, v6
@@ -98,6 +112,7 @@
     if-ge v7, v8, :okh
     const/16 v7, 0x40
     :okh
+    # Direct setFixedSize from stable DisplayMetrics base — no spam
     invoke-interface {v4, v6, v7}, Landroid/view/SurfaceHolder;->setFixedSize(II)V
     :try_end_0
     .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
@@ -177,6 +192,7 @@
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->writeScaleFile()V
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureBaseSize()V
 
     new-instance v0, Landroid/os/Handler;
     invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
@@ -321,7 +337,7 @@
 .end method
 
 .method public static setScaleFromProgress(I)V
-    .registers 4
+    .registers 3
     if-lez p0, :one
     const/4 p0, 0x1
     :one
@@ -336,14 +352,14 @@
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->updateLabel()V
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->writeScaleFile()V
     sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
-    if-eqz v1, :apply
+    if-eqz v1, :done
     invoke-interface {v1}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
     move-result-object v1
     const-string v2, "res_scale"
     invoke-interface {v1, v2, v0}, Landroid/content/SharedPreferences$Editor;->putFloat(Ljava/lang/String;F)Landroid/content/SharedPreferences$Editor;
     invoke-interface {v1}, Landroid/content/SharedPreferences$Editor;->apply()V
-    :apply
-    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->applyNow()V
+    :done
+    # Do NOT apply surface here — only on finger-up (onStopTrackingTouch)
     return-void
 .end method
 
