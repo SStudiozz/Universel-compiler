@@ -11,6 +11,7 @@
 
 .method public onProgressChanged(Landroid/widget/SeekBar;IZ)V
     .registers 4
+    # Label only while dragging — do NOT touch the surface every tick
     invoke-static {p2}, Lcom/studio27/melonmod/MelonResOverlay;->setScaleFromProgress(I)V
     return-void
 .end method
@@ -22,6 +23,7 @@
 
 .method public onStopTrackingTouch(Landroid/widget/SeekBar;)V
     .registers 2
+    # Apply once when user lifts finger
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->applyNow()V
     return-void
 .end method
