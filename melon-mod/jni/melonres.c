@@ -2,9 +2,7 @@
  * libmelonres
  *
  * Resolution: INLINE-patch CreateRenderTextureDescriptor so s8 (renderScale)
- * always loads from g_melon_scale. No C-hook (struct return ABI breaks).
- *
- * Also: getters, ResizeBuffers, limbs, Surface path from Java.
+ * always loads from g_melon_scale. Default 0.5 so effect is obvious.
  */
 #include <jni.h>
 #include <stdio.h>
@@ -24,7 +22,7 @@
 #define OFF_GET_WIDTH_SCALE      0x43C58B4u
 #define OFF_GET_HEIGHT_SCALE     0x43C58DCu
 #define OFF_CREATE_RT_DESC       0x42C0824u
-#define OFF_CRTD_SCALE_SAVE      0x42C085Cu  /* +0x38: mov v8, v0  -> load g_melon_scale */
+#define OFF_CRTD_SCALE_SAVE      0x42C085Cu
 #define OFF_SET_BREAK_FORCE      0x4448A24u
 #define OFF_SET_BREAK_TORQUE     0x4448A70u
 #define OFF_UISCALER_UPDATE       0x2067B40u
@@ -35,9 +33,9 @@ typedef void (*SetRenderScale_fn)(float);
 typedef void (*BreakSet_fn)(void *thiz, float value);
 typedef void (*Update_fn)(void *thiz, void *methodInfo);
 
-/* Must stay global (not static) so ADRP from il2cpp can reach it */
-float g_melon_scale = 1.0f;
-static volatile int g_dirty = 0;
+/* Default 0.5 so first launch is obviously softer — slider can raise to 100% */
+float g_melon_scale = 0.5f;
+static volatile int g_dirty = 1;
 
 static uintptr_t g_rx_start;
 static uintptr_t g_rx_file_off;
@@ -48,7 +46,7 @@ static int g_scale_hooks;
 static uint32_t g_saved_force[4];
 static uint32_t g_saved_torque[4];
 static uint32_t g_saved_update[4];
-static uint32_t g_saved_crtd_scale[2]; /* original 2 insns at +0x38 */
+static uint32_t g_saved_crtd_scale[2];
 static int g_crtd_patched;
 
 static int parse_maps(void) {
@@ -112,45 +110,6 @@ static uint32_t enc_ldr_s(int rt, int rn, uint32_t pgoff) {
     return 0xBD400000u | ((pgoff >> 2) << 10) | ((uint32_t)rn << 5) | (uint32_t)rt;
 }
 
-/*
- * CreateRenderTextureDescriptor +0x38 was:
- *   mov v8.16b, v0.16b   ; s8 = renderScale arg
- * Later: width/height *= s8
- *
- * Replace with:
- *   adrp x9, g_melon_scale
- *   ldr  s8, [x9, #lo12]
- * so every RT uses our slider scale.
- *
- * Overwrites 8 bytes (+0x38, +0x3c). +0x3c was "mov x20, x0".
- * We re-emit mov x20,x0 at +0x40 by shifting — actually we only have 8 bytes
- * without moving more. So use a different strategy:
- *
- * Only replace the 4-byte mov v8,v0 with a branch to a tiny stub we write
- * into the 12-byte gap... no gap.
- *
- * Use: fmov s8, #imm for coarse steps written on each nativeApply,
- * OR adrp/ldr into s8 overwriting +0x38 and +0x3c, then fix x20 at next
- * opportunity: patch +0x40 from mov x19,x8 to mov x20,x0 and lose x19 if
- * unused for scale path.
- *
- * Safer: overwrite only +0x38 with fmov s8,#0.5 when scale<=0.6, etc.
- * Full precision: adrp x9 / ldr s8 at +0x38/+0x3c, and at +0x40 put
- * mov x20, x0 (replacing mov x19,x8). x19 is used later — check.
- *
- * From disasm +0x40 mov x19,x8; if x19 is required we break.
- * Minimal risk path used here:
- *   +0x38/+0x3c = adrp x9 / ldr s8
- *   leave +0x40 alone — x20 may be stale; camera is still in x0 for early uses.
- *   Many later uses load camera from x20; those may break.
- *
- * Better: 3-instruction patch using +0x38,0x3c,0x40:
- *   adrp x9, g_melon_scale
- *   ldr  s8, [x9, #off]
- *   mov  x20, x0
- * And save original +0x40 (mov x19,x8) into a trampoline for later if needed.
- * For Melon, x19 often holds MethodInfo-ish; test with 3-insn patch.
- */
 static int patch_crtd_scale_load(void) {
     void *target = at_off(OFF_CRTD_SCALE_SAVE);
     if (!target) return -1;
@@ -167,13 +126,12 @@ static int patch_crtd_scale_load(void) {
         g_saved_crtd_scale[0] = t[0];
         g_saved_crtd_scale[1] = t[1];
     }
-    /* adrp x9, page ; ldr s8, [x9, #off] ; mov x20, x0 */
     t[0] = enc_adrp(9, pc, dest);
     t[1] = enc_ldr_s(8, 9, (uint32_t)(dest & 0xFFFu));
-    t[2] = 0xAA0003F4u; /* mov x20, x0 */
+    t[2] = 0xAA0003F4u;
     __builtin___clear_cache((char *)target, (char *)target + 12);
     g_crtd_patched = 1;
-    LOGI("CRTD scale load -> g_melon_scale @ %p", (void *)&g_melon_scale);
+    LOGI("CRTD scale -> g_melon_scale=%.3f", (double)g_melon_scale);
     return 0;
 }
 
@@ -188,7 +146,7 @@ static int patch_get_render_scale(void) {
     t[1] = enc_ldr_s(0, 8, (uint32_t)(dest & 0xFFFu));
     t[2] = 0xD65F03C0u;
     __builtin___clear_cache((char *)target, (char *)target + 12);
-    LOGI("get_renderScale -> g_melon_scale");
+    LOGI("get_renderScale patched");
     return 0;
 }
 
@@ -204,14 +162,13 @@ static void install_scale_hooks(void) {
     if (w && mprotect_rwx(w, 16) == 0) {
         write_abs_jump((uint32_t *)w, (void *)hooked_width_scale);
         __builtin___clear_cache((char *)w, (char *)w + 16);
-        LOGI("widthScaleFactor hooked");
     }
     if (h && mprotect_rwx(h, 16) == 0) {
         write_abs_jump((uint32_t *)h, (void *)hooked_height_scale);
         __builtin___clear_cache((char *)h, (char *)h + 16);
-        LOGI("heightScaleFactor hooked");
     }
     g_scale_hooks = 1;
+    LOGI("scale hooks installed scale=%.3f", (double)g_melon_scale);
 }
 
 static void apply_scale_now(void) {
@@ -220,8 +177,8 @@ static void apply_scale_now(void) {
     if (s > 1.0f) s = 1.0f;
     ResizeBuffers_fn rb = (ResizeBuffers_fn)at_off(OFF_RESIZE_BUFFERS);
     SetRenderScale_fn srs = (SetRenderScale_fn)at_off(OFF_SET_RENDER_SCALE);
-    if (rb) { rb(s, s); LOGI("ResizeBuffers(%.3f)", (double)s); }
-    if (srs) { srs(s); LOGI("SetRenderScale(%.3f)", (double)s); }
+    if (rb) rb(s, s);
+    if (srs) srs(s);
 }
 
 JNIEXPORT void JNICALL
@@ -231,7 +188,6 @@ Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz
     if (scale > 1.0f) scale = 1.0f;
     g_melon_scale = scale;
     g_dirty = 1;
-    /* Re-assert CRTD patch in case something restored bytes */
     patch_crtd_scale_load();
     LOGI("g_melon_scale=%.3f", (double)scale);
 }
@@ -261,13 +217,12 @@ static void hooked_update(void *thiz, void *methodInfo) {
 static void install_update_hook(void) {
     if (g_update_hook) return;
     void *u = at_off(OFF_UISCALER_UPDATE);
-    if (!u) { LOGE("UIScaler.Update resolve failed"); return; }
+    if (!u) return;
     memcpy(g_saved_update, u, 16);
-    if (mprotect_rwx(u, 16) != 0) { LOGE("UIScaler mprotect failed"); return; }
+    if (mprotect_rwx(u, 16) != 0) return;
     write_abs_jump((uint32_t *)u, (void *)hooked_update);
     __builtin___clear_cache((char *)u, (char *)u + 16);
     g_update_hook = 1;
-    LOGI("UIScaler.Update hooked");
 }
 
 static void call_orig_break(unsigned file_off, uint32_t *saved, void *hook, void *thiz, float value) {
@@ -293,16 +248,15 @@ static void install_limb_hooks(void) {
     if (g_limb_hooks) return;
     void *f = at_off(OFF_SET_BREAK_FORCE);
     void *q = at_off(OFF_SET_BREAK_TORQUE);
-    if (!f || !q) { LOGE("limb resolve failed"); return; }
+    if (!f || !q) return;
     memcpy(g_saved_force, f, 16);
     memcpy(g_saved_torque, q, 16);
-    if (mprotect_rwx(f, 16) || mprotect_rwx(q, 16)) { LOGE("limb mprotect failed"); return; }
+    if (mprotect_rwx(f, 16) || mprotect_rwx(q, 16)) return;
     write_abs_jump((uint32_t *)f, (void *)hooked_force);
     write_abs_jump((uint32_t *)q, (void *)hooked_torque);
     __builtin___clear_cache((char *)f, (char *)f + 16);
     __builtin___clear_cache((char *)q, (char *)q + 16);
     g_limb_hooks = 1;
-    LOGI("limb hooks *%.2f", (double)LIMB_MUL);
 }
 
 JNIEXPORT void JNICALL
@@ -315,7 +269,7 @@ Java_com_studio27_melonmod_MelonResOverlay_nativeInitLimbs(JNIEnv *env, jclass c
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)vm; (void)reserved;
-    LOGI("libmelonres loaded");
+    LOGI("libmelonres loaded default scale=0.5");
     install_scale_hooks();
     install_limb_hooks();
     install_update_hook();
