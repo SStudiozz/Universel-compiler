@@ -1,8 +1,7 @@
 /*
  * libmelonres
- * Resolution: patch URP get_renderScale + ScalableBuffer getters to return g_scale.
- * Also ResizeBuffers/SetRenderScale on Unity thread via UIScaler.Update.
- * Limbs: breakForce/Torque * 1.30.
+ * Force resolution via URP CreateRenderTextureDescriptor (s0 = renderScale).
+ * Also getters + ResizeBuffers + limbs.
  */
 #include <jni.h>
 #include <stdio.h>
@@ -18,9 +17,10 @@
 
 #define OFF_RESIZE_BUFFERS       0x43C5904u
 #define OFF_SET_RENDER_SCALE     0x41B9584u
-#define OFF_GET_RENDER_SCALE     0x425CAD8u  /* ldr s0,[x0,#0x60]; ret — 8 bytes */
+#define OFF_GET_RENDER_SCALE     0x425CAD8u
 #define OFF_GET_WIDTH_SCALE      0x43C58B4u
 #define OFF_GET_HEIGHT_SCALE     0x43C58DCu
+#define OFF_CREATE_RT_DESC       0x42C0824u  /* CreateRenderTextureDescriptor */
 #define OFF_SET_BREAK_FORCE      0x4448A24u
 #define OFF_SET_BREAK_TORQUE     0x4448A70u
 #define OFF_UISCALER_UPDATE       0x2067B40u
@@ -30,8 +30,8 @@ typedef void (*ResizeBuffers_fn)(float, float);
 typedef void (*SetRenderScale_fn)(float);
 typedef void (*BreakSet_fn)(void *thiz, float value);
 typedef void (*Update_fn)(void *thiz, void *methodInfo);
+typedef void (*CRTD_fn)(void *cam, float scale, int isHdr, int prec, int msaa, int alpha, int opaque, void *mi);
 
-/* Exposed so ADRP+LDR from il2cpp can load it */
 float g_melon_scale = 1.0f;
 static volatile int g_dirty = 0;
 
@@ -41,9 +41,11 @@ static int g_maps_ok;
 static int g_limb_hooks;
 static int g_update_hook;
 static int g_scale_hooks;
+static int g_crtd_hook;
 static uint32_t g_saved_force[4];
 static uint32_t g_saved_torque[4];
 static uint32_t g_saved_update[4];
+static uint32_t g_saved_crtd[4];
 
 static int parse_maps(void) {
     if (g_maps_ok) return 1;
@@ -93,7 +95,6 @@ static void write_abs_jump(uint32_t *dst, void *target) {
     memcpy(&dst[2], &t, 8);
 }
 
-/* ADRP Xd, dest@PAGE */
 static uint32_t enc_adrp(int rd, uint64_t pc, uint64_t dest) {
     uint64_t pc_page = pc & ~0xFFFULL;
     uint64_t dest_page = dest & ~0xFFFULL;
@@ -103,67 +104,88 @@ static uint32_t enc_adrp(int rd, uint64_t pc, uint64_t dest) {
     return 0x90000000u | (immlo << 29) | (immhi << 5) | (uint32_t)rd;
 }
 
-/* LDR St, [Xn, #pgoff]  (32-bit float, unsigned offset) */
 static uint32_t enc_ldr_s(int rt, int rn, uint32_t pgoff) {
-    uint32_t imm12 = pgoff >> 2;
-    return 0xBD400000u | (imm12 << 10) | ((uint32_t)rn << 5) | (uint32_t)rt;
+    return 0xBD400000u | ((pgoff >> 2) << 10) | ((uint32_t)rn << 5) | (uint32_t)rt;
 }
 
-/*
- * Patch get_renderScale (8-byte function) into:
- *   ADRP X8, g_melon_scale@PAGE
- *   LDR  S0, [X8, g_melon_scale@OFF]
- *   RET
- * 12 bytes — overwrites set_renderScale entry with RET (game set becomes no-op).
- */
 static int patch_get_render_scale(void) {
     void *target = at_off(OFF_GET_RENDER_SCALE);
     if (!target) return -1;
     uint64_t pc = (uint64_t)(uintptr_t)target;
     uint64_t dest = (uint64_t)(uintptr_t)&g_melon_scale;
-    int64_t page_delta = (int64_t)((dest & ~0xFFFULL) - (pc & ~0xFFFULL));
-    /* ADRP range ±4GB */
-    if (page_delta < -(1LL << 32) || page_delta >= (1LL << 32)) {
-        LOGE("g_melon_scale too far for ADRP");
-        return -1;
-    }
     if (mprotect_rwx(target, 16) != 0) return -1;
     uint32_t *t = (uint32_t *)target;
     t[0] = enc_adrp(8, pc, dest);
     t[1] = enc_ldr_s(0, 8, (uint32_t)(dest & 0xFFFu));
-    t[2] = 0xD65F03C0u; /* RET — also becomes set_renderScale entry */
+    t[2] = 0xD65F03C0u;
     __builtin___clear_cache((char *)target, (char *)target + 12);
-    LOGI("get_renderScale -> g_melon_scale @ %p", (void *)&g_melon_scale);
+    LOGI("get_renderScale -> g_melon_scale");
     return 0;
 }
 
-/* Float getters that only return g_melon_scale */
 static float hooked_width_scale(void) { return g_melon_scale; }
 static float hooked_height_scale(void) { return g_melon_scale; }
 
+/* Force our scale into every URP render target descriptor */
+static void hooked_crtd(void *cam, float scale, int isHdr, int prec, int msaa, int alpha, int opaque, void *mi);
+
+static void call_orig_crtd(void *cam, float scale, int isHdr, int prec, int msaa, int alpha, int opaque, void *mi) {
+    void *target = at_off(OFF_CREATE_RT_DESC);
+    if (!target) return;
+    uint32_t *t = (uint32_t *)target;
+    if (mprotect_rwx(target, 16) != 0) return;
+    memcpy(t, g_saved_crtd, 16);
+    __builtin___clear_cache((char *)t, (char *)t + 16);
+    ((CRTD_fn)target)(cam, scale, isHdr, prec, msaa, alpha, opaque, mi);
+    write_abs_jump(t, (void *)hooked_crtd);
+    __builtin___clear_cache((char *)t, (char *)t + 16);
+}
+
+static void hooked_crtd(void *cam, float scale, int isHdr, int prec, int msaa, int alpha, int opaque, void *mi) {
+    float s = g_melon_scale;
+    if (s < 0.05f) s = 0.05f;
+    if (s > 1.0f) s = 1.0f;
+    /* Multiply so we still respect any engine scale, but force ours as ceiling */
+    float use = scale * s;
+    if (use < 0.05f) use = 0.05f;
+    if (use > 1.0f) use = 1.0f;
+    call_orig_crtd(cam, use, isHdr, prec, msaa, alpha, opaque, mi);
+}
+
+static void install_crtd_hook(void) {
+    if (g_crtd_hook) return;
+    void *p = at_off(OFF_CREATE_RT_DESC);
+    if (!p) { LOGE("CreateRTDesc resolve failed"); return; }
+    memcpy(g_saved_crtd, p, 16);
+    if (mprotect_rwx(p, 16) != 0) { LOGE("CreateRTDesc mprotect failed"); return; }
+    write_abs_jump((uint32_t *)p, (void *)hooked_crtd);
+    __builtin___clear_cache((char *)p, (char *)p + 16);
+    g_crtd_hook = 1;
+    LOGI("CreateRenderTextureDescriptor hooked");
+}
+
 static void install_scale_hooks(void) {
     if (g_scale_hooks) return;
-    if (patch_get_render_scale() != 0)
-        LOGE("get_renderScale patch failed");
-
+    patch_get_render_scale();
     void *w = at_off(OFF_GET_WIDTH_SCALE);
     void *h = at_off(OFF_GET_HEIGHT_SCALE);
     if (w && mprotect_rwx(w, 16) == 0) {
         write_abs_jump((uint32_t *)w, (void *)hooked_width_scale);
         __builtin___clear_cache((char *)w, (char *)w + 16);
-        LOGI("get_widthScaleFactor hooked");
+        LOGI("widthScaleFactor hooked");
     }
     if (h && mprotect_rwx(h, 16) == 0) {
         write_abs_jump((uint32_t *)h, (void *)hooked_height_scale);
         __builtin___clear_cache((char *)h, (char *)h + 16);
-        LOGI("get_heightScaleFactor hooked");
+        LOGI("heightScaleFactor hooked");
     }
+    install_crtd_hook();
     g_scale_hooks = 1;
 }
 
 static void apply_scale_now(void) {
     float s = g_melon_scale;
-    if (s < 0.01f) s = 0.01f;
+    if (s < 0.05f) s = 0.05f;
     if (s > 1.0f) s = 1.0f;
     ResizeBuffers_fn rb = (ResizeBuffers_fn)at_off(OFF_RESIZE_BUFFERS);
     SetRenderScale_fn srs = (SetRenderScale_fn)at_off(OFF_SET_RENDER_SCALE);
@@ -174,7 +196,7 @@ static void apply_scale_now(void) {
 JNIEXPORT void JNICALL
 Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz, jfloat scale) {
     (void)env; (void)clazz;
-    if (scale < 0.01f) scale = 0.01f;
+    if (scale < 0.05f) scale = 0.05f;
     if (scale > 1.0f) scale = 1.0f;
     g_melon_scale = scale;
     g_dirty = 1;
@@ -196,7 +218,8 @@ static void call_orig_update(void *thiz, void *methodInfo) {
 }
 
 static void hooked_update(void *thiz, void *methodInfo) {
-    if (g_dirty) {
+    /* Keep forcing buffer scale while not 100% so RTs stay correct */
+    if (g_dirty || g_melon_scale < 0.999f) {
         g_dirty = 0;
         apply_scale_now();
     }
