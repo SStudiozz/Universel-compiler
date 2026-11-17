@@ -38,10 +38,26 @@ new_f = (0x1E2E1002 & ~0x001FE000) | (0x78 << 13)  # fmov s2, #1.5
 data[fmov_off:fmov_off + 4] = struct.pack('<I', new_f)
 print(f'SetShake intensity mul -> 1.5 (was {fmov:08x})')
 
-# Joint breakForce/Torque hooks REMOVED — previous cave @ 0x21559B0
-# overwrote live code and crashed in libunity physics.
+# ============================================================
+# NUCLEAR RESOLUTION: CreateRenderTextureDescriptor +0x38
+# was: mov v8.16b, v0.16b  (s8 = renderScale argument)
+# now: fmov s8, #0.5       (always half internal RT scale)
+# Width/height later do: pixel * s8  -> half res targets.
+# Runtime JNI can rewrite this insn for other tiers.
+# ============================================================
+CRTD = 0x42C0824
+scale_insn = CRTD + 0x38
+cur = int.from_bytes(data[scale_insn:scale_insn + 4], 'little')
+print(f'CRTD+0x38 before: {cur:08x}')
+if cur == 0x4EA01C08:
+    # fmov s8, #0.5
+    data[scale_insn:scale_insn + 4] = struct.pack('<I', 0x1E2E1008)
+    print('CRTD renderScale FORCED to 0.5 (fmov s8, #0.5)')
+else:
+    print(f'WARNING unexpected CRTD insn {cur:08x}, patching anyway')
+    data[scale_insn:scale_insn + 4] = struct.pack('<I', 0x1E2E1008)
+
 print('joint break hooks: DISABLED (safety)')
-print('resolution: JNI only')
 print('NO slow-mo')
 libp.write_bytes(data)
 print('native_patch done')
