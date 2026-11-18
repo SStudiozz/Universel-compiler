@@ -1,8 +1,6 @@
 /*
- * libmelonres
- * - Surface low-res via Java setFixedSize
- * - Screen.get_width/height return full display size so UI/buttons stay correct
- * - Giants: 3x joint strength when lossyScale >= 1.2
+ * libmelonres — DIAGNOSTIC build
+ * ONLY giant/limb joint strength. NO resolution. NO Screen hooks.
  */
 #include <jni.h>
 #include <stdio.h>
@@ -20,8 +18,6 @@
 #define OFF_SET_BREAK_TORQUE  0x4448A70u
 #define OFF_GET_TRANSFORM     0x43E87B8u
 #define OFF_GET_LOSSY_SCALE   0x43F659Cu
-#define OFF_SCREEN_GET_WIDTH  0x43C3818u
-#define OFF_SCREEN_GET_HEIGHT 0x43C3840u
 
 #define LIMB_MUL 1.30f
 #define GIANT_SCALE_THRESHOLD 1.20f
@@ -31,15 +27,10 @@ typedef void (*BreakSet_fn)(void *thiz, float value);
 typedef void *(*GetTransform_fn)(void *component);
 typedef void (*GetLossyScale_fn)(void *transform, float *out_xyz);
 
-static int g_display_w = 0;
-static int g_display_h = 0;
-static float g_res_scale = 1.0f;
-
 static uintptr_t g_rx_start;
 static uintptr_t g_rx_file_off;
 static int g_maps_ok;
 static int g_limb_hooks;
-static int g_screen_hooks;
 static uint32_t g_saved_force[4];
 static uint32_t g_saved_torque[4];
 
@@ -59,7 +50,6 @@ static int parse_maps(void) {
             g_rx_start = (uintptr_t)start;
             g_rx_file_off = (uintptr_t)offset;
             g_maps_ok = 1;
-            LOGI("il2cpp RX %lx-%lx off=%lx", start, end, offset);
             break;
         }
         if (!g_maps_ok) {
@@ -89,48 +79,6 @@ static void write_abs_jump(uint32_t *dst, void *target) {
     dst[1] = 0xD61F0200u;
     uint64_t t = (uint64_t)(uintptr_t)target;
     memcpy(&dst[2], &t, 8);
-}
-
-/* Always report full panel size to Unity UI / layout code */
-static int hooked_screen_width(void) {
-    if (g_display_w > 0) return g_display_w;
-    return 1080;
-}
-static int hooked_screen_height(void) {
-    if (g_display_h > 0) return g_display_h;
-    return 1920;
-}
-
-static void install_screen_hooks(void) {
-    if (g_screen_hooks) return;
-    void *w = at_off(OFF_SCREEN_GET_WIDTH);
-    void *h = at_off(OFF_SCREEN_GET_HEIGHT);
-    if (!w || !h) { LOGE("Screen.get_width/height resolve failed"); return; }
-    if (mprotect_rwx(w, 16) || mprotect_rwx(h, 16)) { LOGE("Screen mprotect failed"); return; }
-    write_abs_jump((uint32_t *)w, (void *)hooked_screen_width);
-    write_abs_jump((uint32_t *)h, (void *)hooked_screen_height);
-    __builtin___clear_cache((char *)w, (char *)w + 16);
-    __builtin___clear_cache((char *)h, (char *)h + 16);
-    g_screen_hooks = 1;
-    LOGI("Screen.get_width/height -> display %dx%d", g_display_w, g_display_h);
-}
-
-JNIEXPORT void JNICALL
-Java_com_studio27_melonmod_MelonResOverlay_nativeSetDisplaySize(JNIEnv *env, jclass clazz, jint w, jint h) {
-    (void)env; (void)clazz;
-    if (w > 0) g_display_w = w;
-    if (h > 0) g_display_h = h;
-    LOGI("display size %dx%d", g_display_w, g_display_h);
-    install_screen_hooks();
-}
-
-JNIEXPORT void JNICALL
-Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz, jfloat scale) {
-    (void)env; (void)clazz;
-    if (scale < 0.05f) scale = 0.05f;
-    if (scale > 1.0f) scale = 1.0f;
-    g_res_scale = scale;
-    LOGI("res scale=%.3f", (double)scale);
 }
 
 static float joint_body_scale(void *joint) {
@@ -180,29 +128,27 @@ static void install_limb_hooks(void) {
     if (g_limb_hooks) return;
     void *f = at_off(OFF_SET_BREAK_FORCE);
     void *q = at_off(OFF_SET_BREAK_TORQUE);
-    if (!f || !q) return;
+    if (!f || !q) { LOGE("limb resolve failed"); return; }
     memcpy(g_saved_force, f, 16);
     memcpy(g_saved_torque, q, 16);
-    if (mprotect_rwx(f, 16) || mprotect_rwx(q, 16)) return;
+    if (mprotect_rwx(f, 16) || mprotect_rwx(q, 16)) { LOGE("limb mprotect failed"); return; }
     write_abs_jump((uint32_t *)f, (void *)hooked_force);
     write_abs_jump((uint32_t *)q, (void *)hooked_torque);
     __builtin___clear_cache((char *)f, (char *)f + 16);
     __builtin___clear_cache((char *)q, (char *)q + 16);
     g_limb_hooks = 1;
-    LOGI("limb hooks ok (giants 3x)");
+    LOGI("limb hooks only (res DISABLED)");
 }
 
 JNIEXPORT void JNICALL
 Java_com_studio27_melonmod_MelonResOverlay_nativeInitLimbs(JNIEnv *env, jclass clazz) {
     (void)env; (void)clazz;
     install_limb_hooks();
-    install_screen_hooks();
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)vm; (void)reserved;
-    LOGI("libmelonres UI-safe res + giants");
+    LOGI("libmelonres DIAG no-res limbs-only");
     install_limb_hooks();
-    install_screen_hooks();
     return JNI_VERSION_1_6;
 }
