@@ -49,25 +49,43 @@
     return-void
 .end method
 
-# ALWAYS from DisplayMetrics — never from surface (fixed size poisons getWidth)
 .method public static refreshBaseFromDisplay()V
-    .registers 4
+    .registers 5
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
     if-eqz v0, :done
     :try_start_0
+    # Prefer real metrics (full panel) over widthPixels
+    invoke-virtual {v0}, Landroid/app/Activity;->getWindowManager()Landroid/view/WindowManager;
+    move-result-object v1
+    invoke-interface {v1}, Landroid/view/WindowManager;->getDefaultDisplay()Landroid/view/Display;
+    move-result-object v1
+    new-instance v2, Landroid/util/DisplayMetrics;
+    invoke-direct {v2}, Landroid/util/DisplayMetrics;-><init>()V
+    invoke-virtual {v1, v2}, Landroid/view/Display;->getRealMetrics(Landroid/util/DisplayMetrics;)V
+    iget v3, v2, Landroid/util/DisplayMetrics;->widthPixels:I
+    iget v4, v2, Landroid/util/DisplayMetrics;->heightPixels:I
+    if-lez v3, :fallback
+    if-lez v4, :fallback
+    sput v3, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sput v4, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
+    goto :push
+    :fallback
     invoke-virtual {v0}, Landroid/app/Activity;->getResources()Landroid/content/res/Resources;
     move-result-object v0
     invoke-virtual {v0}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
     move-result-object v0
-    iget v1, v0, Landroid/util/DisplayMetrics;->widthPixels:I
-    iget v2, v0, Landroid/util/DisplayMetrics;->heightPixels:I
-    if-lez v1, :done
-    if-lez v2, :done
-    sput v1, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
-    sput v2, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
-    sget-boolean v3, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
-    if-eqz v3, :done
-    invoke-static {v1, v2}, Lcom/studio27/melonmod/MelonResOverlay;->nativeSetDisplaySize(II)V
+    iget v3, v0, Landroid/util/DisplayMetrics;->widthPixels:I
+    iget v4, v0, Landroid/util/DisplayMetrics;->heightPixels:I
+    if-lez v3, :done
+    if-lez v4, :done
+    sput v3, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sput v4, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
+    :push
+    sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
+    if-eqz v0, :done
+    sget v3, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
+    sget v4, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
+    invoke-static {v3, v4}, Lcom/studio27/melonmod/MelonResOverlay;->nativeSetDisplaySize(II)V
     :try_end_0
     .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
     goto :done
@@ -91,7 +109,8 @@
     const v4, 0x3f7d70a4
     cmpl-float v4, v3, v4
     if-ltz v4, :fixed
-    # 100% — full reset so we never stay stuck low
+    # UNLOCK: explicit full-size fixed then layout — clears stuck low buffer
+    invoke-interface {v2, v0, v1}, Landroid/view/SurfaceHolder;->setFixedSize(II)V
     invoke-interface {v2}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
     goto :done
     :fixed
@@ -101,6 +120,9 @@
     int-to-float v5, v1
     mul-float/2addr v5, v3
     float-to-int v5, v5
+    # even sizes — some GPUs glitch on odd
+    and-int/lit8 v4, v4, -0x2
+    and-int/lit8 v5, v5, -0x2
     const/16 v6, 0x40
     if-ge v4, v6, :okw
     const/16 v4, 0x40
@@ -108,8 +130,6 @@
     if-ge v5, v6, :okh
     const/16 v5, 0x40
     :okh
-    # setSizeFromLayout first so Android accepts a new fixed size
-    invoke-interface {v2}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
     invoke-interface {v2, v4, v5}, Landroid/view/SurfaceHolder;->setFixedSize(II)V
     :try_end_0
     .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
@@ -203,22 +223,18 @@
     invoke-virtual {p0, v0, v1}, Landroid/app/Activity;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
     move-result-object v0
     sput-object v0, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
-    const-string v1, "res_scale"
-    const/high16 v2, 0x3f800000
-    invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getFloat(Ljava/lang/String;F)F
-    move-result v0
-    # Clamp stored value
-    const v1, 0x3d4ccccd
-    cmpg-float v2, v0, v1
-    if-gez v2, :hi
-    const/high16 v0, 0x3f000000
-    :hi
-    const/high16 v1, 0x3f800000
-    cmpl-float v2, v0, v1
-    if-lez v2, :okscale
+
+    # Force 100% on boot so a previous stuck low-res never locks the session
     const/high16 v0, 0x3f800000
-    :okscale
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
+    sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
+    if-eqz v1, :skippref
+    invoke-interface {v1}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+    move-result-object v1
+    const-string v2, "res_scale"
+    invoke-interface {v1, v2, v0}, Landroid/content/SharedPreferences$Editor;->putFloat(Ljava/lang/String;F)Landroid/content/SharedPreferences$Editor;
+    invoke-interface {v1}, Landroid/content/SharedPreferences$Editor;->apply()V
+    :skippref
 
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->writeScaleFile()V
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
@@ -228,14 +244,14 @@
     invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
     move-result-object v1
     invoke-direct {v0, v1}, Landroid/os/Handler;-><init>(Landroid/os/Looper;)V
-    # Delayed apply only — surface ready after Unity boots
+    # Unlock full-res first
     new-instance v1, Lcom/studio27/melonmod/MelonResOverlay$2;
     invoke-direct {v1}, Lcom/studio27/melonmod/MelonResOverlay$2;-><init>()V
-    const-wide/16 v2, 0x5dc
+    const-wide/16 v2, 0x3e8
     invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
     new-instance v1, Lcom/studio27/melonmod/MelonResOverlay$2;
     invoke-direct {v1}, Lcom/studio27/melonmod/MelonResOverlay$2;-><init>()V
-    const-wide/16 v2, 0xfa0
+    const-wide/16 v2, 0xbb8
     invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
 
     new-instance v0, Landroid/widget/LinearLayout;
@@ -264,17 +280,7 @@
     sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->seek:Landroid/widget/SeekBar;
     const/16 v2, 0x64
     invoke-virtual {v1, v2}, Landroid/widget/SeekBar;->setMax(I)V
-    sget v2, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
-    const/high16 v3, 0x42c80000
-    mul-float/2addr v2, v3
-    float-to-int v2, v2
-    if-lez v2, :pmin
-    const/4 v2, 0x1
-    :pmin
-    const/16 v3, 0x64
-    if-le v2, v3, :set_prog
     const/16 v2, 0x64
-    :set_prog
     invoke-virtual {v1, v2}, Landroid/widget/SeekBar;->setProgress(I)V
     new-instance v2, Lcom/studio27/melonmod/MelonResOverlay$1;
     invoke-direct {v2}, Lcom/studio27/melonmod/MelonResOverlay$1;-><init>()V
