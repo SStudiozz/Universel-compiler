@@ -98,6 +98,7 @@ jobs:
           cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay\$1.smali decoded/smali/com/studio27/melonmod/
           cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay\$2.smali decoded/smali/com/studio27/melonmod/
           cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay\$3.smali decoded/smali/com/studio27/melonmod/
+          cp melon-mod/smali/com/studio27/melonmod/MelonResOverlay\$4.smali decoded/smali/com/studio27/melonmod/
           python3 melon-mod/hook_fps_activity.py
           echo "DocumentsProvider + ResOverlay installed"
 
