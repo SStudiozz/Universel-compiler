@@ -1,8 +1,7 @@
 /*
  * libmelonres
- * - SettingsController hooks use DUMP OFFSET (not RVA)
- * - JNI class cached as global ref (FindClass fails on Unity threads)
- * - Limb hooks use fixed trampolines (no mprotect on hot path)
+ * Giant strength: cheap 32-slot joint* cache + size tiers (3x / 5x)
+ * Scale looked up at most once per joint pointer, not every break set.
  */
 #include <jni.h>
 #include <stdio.h>
@@ -26,7 +25,6 @@ static jmethodID g_set_settings_open;
 
 #if defined(__aarch64__)
 
-/* File OFFSETs from Il2CppDumper (Offset: field), NOT RVA */
 #define OFF_RESIZE_BUFFERS     0x43C5904u
 #define OFF_SET_RENDER_SCALE   0x41B9584u
 #define OFF_CRTD_SCALE         0x42C085Cu
@@ -34,19 +32,22 @@ static jmethodID g_set_settings_open;
 #define OFF_SET_BREAK_TORQUE   0x4448A70u
 #define OFF_GET_TRANSFORM      0x43E87B8u
 #define OFF_GET_LOSSY_SCALE    0x43F659Cu
-/* SettingsController — Offset column from dump */
 #define OFF_SETTINGS_START     0x2229284u
 #define OFF_SETTINGS_ONDESTROY 0x2229D88u
 #define OFF_SETTINGS_INITUI    0x2229588u
 
-#define LIMB_MUL 1.30f
-#define GIANT_SCALE_THRESHOLD 1.20f
-#define GIANT_STRENGTH 3.00f
+#define BASE_LIMB_MUL 1.30f
+#define TALL_SCALE    1.25f   /* a bit taller than normal */
+#define HUGE_SCALE    2.00f
+#define TALL_MUL      3.00f
+#define HUGE_MUL      5.00f
 
 #define INSN_MOV_V8_V0   0x4EA01C08u
 #define INSN_FMOV_S8_25  0x1E2A1008u
 #define INSN_FMOV_S8_50  0x1E2E1008u
 #define INSN_FMOV_S8_75  0x1E2F1008u
+
+#define MUL_CACHE_N 32
 
 typedef void (*ResizeBuffers_fn)(float, float);
 typedef void (*SetRenderScale_fn)(float);
@@ -62,12 +63,19 @@ static int g_maps_ok;
 static int g_limb_hooks;
 static int g_settings_hooks;
 
-/* Executable trampolines: orig 4 insn + absolute jump to orig+16 */
+static GetTransform_fn g_get_tr;
+static GetLossyScale_fn g_get_ls;
+
 static uint32_t *g_tramp_force;
 static uint32_t *g_tramp_torque;
 static uint32_t *g_tramp_start;
 static uint32_t *g_tramp_destroy;
 static uint32_t *g_tramp_initui;
+
+/* Cheap joint -> mul cache (pointer identity only) */
+static void *g_mul_key[MUL_CACHE_N];
+static float g_mul_val[MUL_CACHE_N];
+static int g_mul_clock;
 
 static int parse_maps(void) {
     if (g_maps_ok) return 1;
@@ -85,7 +93,6 @@ static int parse_maps(void) {
             g_rx_start = (uintptr_t)start;
             g_rx_file_off = (uintptr_t)offset;
             g_maps_ok = 1;
-            LOGI("il2cpp RX %lx off=%lx", start, offset);
             break;
         }
         if (!g_maps_ok) {
@@ -111,13 +118,12 @@ static int mprotect_rwx(void *addr, size_t len) {
 }
 
 static void write_abs_jump(uint32_t *dst, void *target) {
-    dst[0] = 0x58000050u; /* ldr x16, #8 */
-    dst[1] = 0xD61F0200u; /* br x16 */
+    dst[0] = 0x58000050u;
+    dst[1] = 0xD61F0200u;
     uint64_t t = (uint64_t)(uintptr_t)target;
     memcpy(&dst[2], &t, 8);
 }
 
-/* Alloc RWX page and build trampoline: 4 original insns + jump to cont */
 static uint32_t *make_trampoline(void *func) {
     uint32_t *tr = (uint32_t *)mmap(NULL, 4096,
         PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -148,7 +154,6 @@ static void cache_jni(JNIEnv *env) {
     if (g_overlay_class) return;
     jclass local = (*env)->FindClass(env, "com/studio27/melonmod/MelonResOverlay");
     if (!local) {
-        LOGE("FindClass MelonResOverlay failed");
         if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
         return;
     }
@@ -156,24 +161,18 @@ static void cache_jni(JNIEnv *env) {
     (*env)->DeleteLocalRef(env, local);
     g_set_settings_open = (*env)->GetStaticMethodID(env, g_overlay_class,
                             "setSettingsOpen", "(Z)V");
-    if (!g_set_settings_open) LOGE("GetStaticMethodID setSettingsOpen failed");
-    else LOGI("JNI MelonResOverlay cached");
 }
 
-/* ---- settings (event-driven) ---- */
 static void hooked_settings_start(void *thiz) {
     if (g_tramp_start) ((VoidThis_fn)g_tramp_start)(thiz);
     notify_settings_open(1);
-    LOGI("Settings.Start -> show Res");
 }
 static void hooked_settings_initui(void *thiz) {
     if (g_tramp_initui) ((VoidThis_fn)g_tramp_initui)(thiz);
     notify_settings_open(1);
-    LOGI("Settings.InitializeUI -> show Res");
 }
 static void hooked_settings_destroy(void *thiz) {
     notify_settings_open(0);
-    LOGI("Settings.OnDestroy -> hide Res");
     if (g_tramp_destroy) ((VoidThis_fn)g_tramp_destroy)(thiz);
 }
 
@@ -182,18 +181,12 @@ static void install_settings_hooks(void) {
     void *s = at_off(OFF_SETTINGS_START);
     void *d = at_off(OFF_SETTINGS_ONDESTROY);
     void *i = at_off(OFF_SETTINGS_INITUI);
-    if (!s || !d || !i) { LOGE("settings resolve failed"); return; }
-    LOGI("settings bytes start=%08x destroy=%08x init=%08x",
-         *(uint32_t *)s, *(uint32_t *)d, *(uint32_t *)i);
+    if (!s || !d || !i) return;
     g_tramp_start = make_trampoline(s);
     g_tramp_destroy = make_trampoline(d);
     g_tramp_initui = make_trampoline(i);
-    if (!g_tramp_start || !g_tramp_destroy || !g_tramp_initui) {
-        LOGE("settings trampoline mmap failed"); return;
-    }
-    if (mprotect_rwx(s, 16) || mprotect_rwx(d, 16) || mprotect_rwx(i, 16)) {
-        LOGE("settings mprotect failed"); return;
-    }
+    if (!g_tramp_start || !g_tramp_destroy || !g_tramp_initui) return;
+    if (mprotect_rwx(s, 16) || mprotect_rwx(d, 16) || mprotect_rwx(i, 16)) return;
     write_abs_jump((uint32_t *)s, (void *)hooked_settings_start);
     write_abs_jump((uint32_t *)d, (void *)hooked_settings_destroy);
     write_abs_jump((uint32_t *)i, (void *)hooked_settings_initui);
@@ -201,10 +194,9 @@ static void install_settings_hooks(void) {
     __builtin___clear_cache((char *)d, (char *)d + 16);
     __builtin___clear_cache((char *)i, (char *)i + 16);
     g_settings_hooks = 1;
-    LOGI("SettingsController hooks OK (Offset-based)");
+    LOGI("settings hooks ok");
 }
 
-/* ---- resolution ---- */
 static void patch_crtd(float scale) {
     void *p = at_off(OFF_CRTD_SCALE);
     if (!p) return;
@@ -229,15 +221,19 @@ static void apply_native_scale(float scale) {
     if (srs) srs(scale);
 }
 
-/* ---- limbs (fast path: no mprotect) ---- */
-static float joint_body_scale(void *joint) {
-    GetTransform_fn get_tr = (GetTransform_fn)at_off(OFF_GET_TRANSFORM);
-    GetLossyScale_fn get_ls = (GetLossyScale_fn)at_off(OFF_GET_LOSSY_SCALE);
-    if (!get_tr || !get_ls || !joint) return 1.0f;
-    void *tr = get_tr(joint);
+/* One scale sample -> tiered mul. Called only on cache miss. */
+static float compute_mul_from_scale(float s) {
+    if (s >= HUGE_SCALE) return HUGE_MUL;   /* 5x very big */
+    if (s >= TALL_SCALE) return TALL_MUL;   /* 3x a bit taller */
+    return BASE_LIMB_MUL;                  /* +30% normal */
+}
+
+static float sample_joint_scale(void *joint) {
+    if (!g_get_tr || !g_get_ls || !joint) return 1.0f;
+    void *tr = g_get_tr(joint);
     if (!tr) return 1.0f;
     float v[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-    get_ls(tr, v);
+    g_get_ls(tr, v);
     float sx = v[0] < 0.0f ? -v[0] : v[0];
     float sy = v[1] < 0.0f ? -v[1] : v[1];
     float s = sx > sy ? sx : sy;
@@ -246,11 +242,20 @@ static float joint_body_scale(void *joint) {
     return s;
 }
 
+/* Hot path: O(1) expected — table lookup, scale only on miss */
 static float limb_strength_mul(void *joint) {
-    float s = joint_body_scale(joint);
-    float mul = LIMB_MUL;
-    if (s >= GIANT_SCALE_THRESHOLD)
-        mul *= GIANT_STRENGTH * (s / GIANT_SCALE_THRESHOLD);
+    if (!joint) return BASE_LIMB_MUL;
+    int slot = (int)(((uintptr_t)joint >> 4) & (MUL_CACHE_N - 1));
+    if (g_mul_key[slot] == joint)
+        return g_mul_val[slot];
+
+    float mul = compute_mul_from_scale(sample_joint_scale(joint));
+    g_mul_key[slot] = joint;
+    g_mul_val[slot] = mul;
+    g_mul_clock++;
+    /* occasional log only */
+    if ((g_mul_clock & 63) == 1)
+        LOGI("limb mul cache miss -> %.1fx", (double)mul);
     return mul;
 }
 
@@ -268,18 +273,19 @@ static void install_limb_hooks(void) {
     void *f = at_off(OFF_SET_BREAK_FORCE);
     void *q = at_off(OFF_SET_BREAK_TORQUE);
     if (!f || !q) return;
+    g_get_tr = (GetTransform_fn)at_off(OFF_GET_TRANSFORM);
+    g_get_ls = (GetLossyScale_fn)at_off(OFF_GET_LOSSY_SCALE);
     g_tramp_force = make_trampoline(f);
     g_tramp_torque = make_trampoline(q);
-    if (!g_tramp_force || !g_tramp_torque) {
-        LOGE("limb trampoline failed"); return;
-    }
+    if (!g_tramp_force || !g_tramp_torque) return;
     if (mprotect_rwx(f, 16) || mprotect_rwx(q, 16)) return;
     write_abs_jump((uint32_t *)f, (void *)hooked_force);
     write_abs_jump((uint32_t *)q, (void *)hooked_torque);
     __builtin___clear_cache((char *)f, (char *)f + 16);
     __builtin___clear_cache((char *)q, (char *)q + 16);
+    memset(g_mul_key, 0, sizeof(g_mul_key));
     g_limb_hooks = 1;
-    LOGI("limb hooks OK (fast trampoline)");
+    LOGI("limb hooks: cached tiers 1.3x / 3x / 5x");
 }
 
 #endif /* __aarch64__ */
@@ -305,7 +311,6 @@ Java_com_studio27_melonmod_MelonResOverlay_nativeInitLimbs(JNIEnv *env, jclass c
     patch_crtd(1.0f);
 #else
     (void)env;
-    LOGI("armv7 stub");
 #endif
 }
 
@@ -313,8 +318,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     g_vm = vm;
 #if defined(__aarch64__)
-    LOGI("libmelonres arm64 fixed-settings+fast-limbs");
-    /* Hooks installed from Java nativeInitLimbs so JNI cache is ready */
+    LOGI("libmelonres cheap-giant-cache");
 #else
     LOGI("libmelonres armv7 stub");
 #endif
