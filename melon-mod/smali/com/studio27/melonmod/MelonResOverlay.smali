@@ -15,6 +15,7 @@
 .field private static baseW:I
 .field private static baseH:I
 .field private static expanded:Z
+.field private static settingsOpen:Z
 
 .method private constructor <init>()V
     .registers 1
@@ -26,6 +27,48 @@
 .end method
 
 .method public static native nativeApply(F)V
+.end method
+
+# Called from native SettingsController hooks only — not every frame
+.method public static setSettingsOpen(Z)V
+    .registers 4
+    sput-boolean p0, Lcom/studio27/melonmod/MelonResOverlay;->settingsOpen:Z
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->activity:Landroid/app/Activity;
+    if-eqz v0, :done
+    sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
+    if-eqz v1, :done
+    new-instance v2, Lcom/studio27/melonmod/MelonResOverlay$3;
+    invoke-direct {v2, p0}, Lcom/studio27/melonmod/MelonResOverlay$3;-><init>(Z)V
+    invoke-virtual {v0, v2}, Landroid/app/Activity;->runOnUiThread(Ljava/lang/Runnable;)V
+    :done
+    return-void
+.end method
+
+.method public static applySettingsVisibility(Z)V
+    .registers 3
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
+    if-eqz v0, :done
+    if-eqz p0, :hide
+    const/4 v1, 0x0
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+    # Auto-expand slider when settings opens
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->panel:Landroid/widget/LinearLayout;
+    if-eqz v0, :done
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+    const/4 v0, 0x1
+    sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->tab:Landroid/widget/TextView;
+    if-eqz v0, :done
+    const-string v1, "Res ▾"
+    invoke-virtual {v0, v1}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+    goto :done
+    :hide
+    const/16 v1, 0x8
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+    const/4 v0, 0x0
+    sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
+    :done
+    return-void
 .end method
 
 .method public static ensureLib()V
@@ -51,6 +94,8 @@
 
 .method public static togglePanel()V
     .registers 3
+    sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->settingsOpen:Z
+    if-nez v0, :done
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->panel:Landroid/widget/LinearLayout;
     if-eqz v0, :done
     sget-boolean v1, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
@@ -256,6 +301,7 @@
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
     sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
+    sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->settingsOpen:Z
 
     invoke-virtual {p0}, Landroid/app/Activity;->getApplicationContext()Landroid/content/Context;
     move-result-object v0
@@ -278,8 +324,10 @@
     sput-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
     const/4 v1, 0x1
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setOrientation(I)V
+    # Hidden until SettingsController.Start / InitializeUI
+    const/16 v1, 0x8
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
 
-    # Tab button — always visible, small
     new-instance v1, Landroid/widget/TextView;
     invoke-direct {v1, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
     sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->tab:Landroid/widget/TextView;
@@ -299,7 +347,6 @@
     invoke-virtual {v1, v2}, Landroid/widget/TextView;->setOnClickListener(Landroid/view/View$OnClickListener;)V
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
 
-    # Expandable panel — GONE until tab tapped
     new-instance v1, Landroid/widget/LinearLayout;
     invoke-direct {v1, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V
     sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->panel:Landroid/widget/LinearLayout;
