@@ -1,7 +1,8 @@
 /*
  * libmelonres
- * Giant strength: cheap 32-slot joint* cache + size tiers (3x / 5x)
- * Scale looked up at most once per joint pointer, not every break set.
+ * - Settings-only Res UI + 60 FPS lock
+ * - Cheap giant tiers (cached)
+ * - Fast trampolines (no hot mprotect)
  */
 #include <jni.h>
 #include <stdio.h>
@@ -25,19 +26,21 @@ static jmethodID g_set_settings_open;
 
 #if defined(__aarch64__)
 
-#define OFF_RESIZE_BUFFERS     0x43C5904u
-#define OFF_SET_RENDER_SCALE   0x41B9584u
-#define OFF_CRTD_SCALE         0x42C085Cu
-#define OFF_SET_BREAK_FORCE    0x4448A24u
-#define OFF_SET_BREAK_TORQUE   0x4448A70u
-#define OFF_GET_TRANSFORM      0x43E87B8u
-#define OFF_GET_LOSSY_SCALE    0x43F659Cu
-#define OFF_SETTINGS_START     0x2229284u
-#define OFF_SETTINGS_ONDESTROY 0x2229D88u
-#define OFF_SETTINGS_INITUI    0x2229588u
+#define OFF_RESIZE_BUFFERS      0x43C5904u
+#define OFF_SET_RENDER_SCALE    0x41B9584u
+#define OFF_CRTD_SCALE          0x42C085Cu
+#define OFF_SET_BREAK_FORCE     0x4448A24u
+#define OFF_SET_BREAK_TORQUE    0x4448A70u
+#define OFF_GET_TRANSFORM       0x43E87B8u
+#define OFF_GET_LOSSY_SCALE     0x43F659Cu
+#define OFF_SETTINGS_START      0x2229284u
+#define OFF_SETTINGS_ONDESTROY  0x2229D88u
+#define OFF_SETTINGS_INITUI     0x2229588u
+#define OFF_APPLY_FRAME_RATE    0x222ADE0u
+#define OFF_SET_TARGET_FPS      0x43B7674u
 
 #define BASE_LIMB_MUL 1.30f
-#define TALL_SCALE    1.25f   /* a bit taller than normal */
+#define TALL_SCALE    1.25f
 #define HUGE_SCALE    2.00f
 #define TALL_MUL      3.00f
 #define HUGE_MUL      5.00f
@@ -53,26 +56,31 @@ typedef void (*ResizeBuffers_fn)(float, float);
 typedef void (*SetRenderScale_fn)(float);
 typedef void (*BreakSet_fn)(void *thiz, float value);
 typedef void (*VoidThis_fn)(void *thiz);
+typedef void (*VoidFn)(void);
+typedef void (*SetTargetFps_fn)(int value);
 typedef void *(*GetTransform_fn)(void *component);
 typedef void (*GetLossyScale_fn)(void *transform, float *out_xyz);
 
 static float g_scale = 1.0f;
+static int g_lock60;
 static uintptr_t g_rx_start;
 static uintptr_t g_rx_file_off;
 static int g_maps_ok;
 static int g_limb_hooks;
 static int g_settings_hooks;
+static int g_fps_hooks;
 
 static GetTransform_fn g_get_tr;
 static GetLossyScale_fn g_get_ls;
+static SetTargetFps_fn g_set_fps;
 
 static uint32_t *g_tramp_force;
 static uint32_t *g_tramp_torque;
 static uint32_t *g_tramp_start;
 static uint32_t *g_tramp_destroy;
 static uint32_t *g_tramp_initui;
+static uint32_t *g_tramp_fps;
 
-/* Cheap joint -> mul cache (pointer identity only) */
 static void *g_mul_key[MUL_CACHE_N];
 static float g_mul_val[MUL_CACHE_N];
 static int g_mul_clock;
@@ -135,6 +143,15 @@ static uint32_t *make_trampoline(void *func) {
     return tr;
 }
 
+static void apply_target_fps(void) {
+    if (!g_set_fps) g_set_fps = (SetTargetFps_fn)at_off(OFF_SET_TARGET_FPS);
+    if (!g_set_fps) return;
+    if (g_lock60) {
+        g_set_fps(60);
+        LOGI("targetFrameRate=60");
+    }
+}
+
 static void notify_settings_open(int open) {
     if (!g_vm || !g_overlay_class || !g_set_settings_open) return;
     JNIEnv *env = NULL;
@@ -176,6 +193,11 @@ static void hooked_settings_destroy(void *thiz) {
     if (g_tramp_destroy) ((VoidThis_fn)g_tramp_destroy)(thiz);
 }
 
+static void hooked_apply_fps(void) {
+    if (g_tramp_fps) ((VoidFn)g_tramp_fps)();
+    apply_target_fps();
+}
+
 static void install_settings_hooks(void) {
     if (g_settings_hooks) return;
     void *s = at_off(OFF_SETTINGS_START);
@@ -194,7 +216,21 @@ static void install_settings_hooks(void) {
     __builtin___clear_cache((char *)d, (char *)d + 16);
     __builtin___clear_cache((char *)i, (char *)i + 16);
     g_settings_hooks = 1;
-    LOGI("settings hooks ok");
+}
+
+static void install_fps_hooks(void) {
+    if (g_fps_hooks) return;
+    void *f = at_off(OFF_APPLY_FRAME_RATE);
+    g_set_fps = (SetTargetFps_fn)at_off(OFF_SET_TARGET_FPS);
+    if (!f || !g_set_fps) { LOGE("fps resolve fail"); return; }
+    g_tramp_fps = make_trampoline(f);
+    if (!g_tramp_fps) return;
+    if (mprotect_rwx(f, 16)) return;
+    write_abs_jump((uint32_t *)f, (void *)hooked_apply_fps);
+    __builtin___clear_cache((char *)f, (char *)f + 16);
+    g_fps_hooks = 1;
+    LOGI("ApplyFrameRateSettings hooked");
+    apply_target_fps();
 }
 
 static void patch_crtd(float scale) {
@@ -221,11 +257,10 @@ static void apply_native_scale(float scale) {
     if (srs) srs(scale);
 }
 
-/* One scale sample -> tiered mul. Called only on cache miss. */
 static float compute_mul_from_scale(float s) {
-    if (s >= HUGE_SCALE) return HUGE_MUL;   /* 5x very big */
-    if (s >= TALL_SCALE) return TALL_MUL;   /* 3x a bit taller */
-    return BASE_LIMB_MUL;                  /* +30% normal */
+    if (s >= HUGE_SCALE) return HUGE_MUL;
+    if (s >= TALL_SCALE) return TALL_MUL;
+    return BASE_LIMB_MUL;
 }
 
 static float sample_joint_scale(void *joint) {
@@ -242,20 +277,15 @@ static float sample_joint_scale(void *joint) {
     return s;
 }
 
-/* Hot path: O(1) expected — table lookup, scale only on miss */
 static float limb_strength_mul(void *joint) {
     if (!joint) return BASE_LIMB_MUL;
     int slot = (int)(((uintptr_t)joint >> 4) & (MUL_CACHE_N - 1));
     if (g_mul_key[slot] == joint)
         return g_mul_val[slot];
-
     float mul = compute_mul_from_scale(sample_joint_scale(joint));
     g_mul_key[slot] = joint;
     g_mul_val[slot] = mul;
     g_mul_clock++;
-    /* occasional log only */
-    if ((g_mul_clock & 63) == 1)
-        LOGI("limb mul cache miss -> %.1fx", (double)mul);
     return mul;
 }
 
@@ -285,7 +315,6 @@ static void install_limb_hooks(void) {
     __builtin___clear_cache((char *)q, (char *)q + 16);
     memset(g_mul_key, 0, sizeof(g_mul_key));
     g_limb_hooks = 1;
-    LOGI("limb hooks: cached tiers 1.3x / 3x / 5x");
 }
 
 #endif /* __aarch64__ */
@@ -302,12 +331,29 @@ Java_com_studio27_melonmod_MelonResOverlay_nativeApply(JNIEnv *env, jclass clazz
 }
 
 JNIEXPORT void JNICALL
+Java_com_studio27_melonmod_MelonResOverlay_nativeSetLock60(JNIEnv *env, jclass clazz, jboolean on) {
+    (void)env; (void)clazz;
+#if defined(__aarch64__)
+    g_lock60 = on ? 1 : 0;
+    apply_target_fps();
+    if (!on && g_set_fps) {
+        /* yield to game default after unlock; ApplyFrameRateSettings will fix 30 mode */
+        g_set_fps(-1);
+        LOGI("targetFrameRate=-1 (unlocked)");
+    }
+#else
+    (void)on;
+#endif
+}
+
+JNIEXPORT void JNICALL
 Java_com_studio27_melonmod_MelonResOverlay_nativeInitLimbs(JNIEnv *env, jclass clazz) {
     (void)clazz;
 #if defined(__aarch64__)
     cache_jni(env);
     install_limb_hooks();
     install_settings_hooks();
+    install_fps_hooks();
     patch_crtd(1.0f);
 #else
     (void)env;
@@ -318,7 +364,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     g_vm = vm;
 #if defined(__aarch64__)
-    LOGI("libmelonres cheap-giant-cache");
+    LOGI("libmelonres fps60+cache");
 #else
     LOGI("libmelonres armv7 stub");
 #endif
