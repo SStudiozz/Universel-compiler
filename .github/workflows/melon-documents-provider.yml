@@ -68,25 +68,26 @@ jobs:
         run: |
           set -euo pipefail
           apktool d -f original.apk -o decoded
-          echo "Decoded tree:"
           du -sh decoded
-          find decoded -maxdepth 2 -type d | head -40
 
       - name: Native IL2CPP patches
         run: |
           set -euo pipefail
           python3 melon-mod/native_patch.py
 
-      - name: Build libmelonres.so (JNI resolution)
+      - name: Build libmelonres.so arm64 + armv7
         run: |
           set -euo pipefail
           NDK="${{ steps.setup-ndk.outputs.ndk-path }}"
-          CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
-          "$CC" -shared -fPIC -O2 -o libmelonres.so melon-mod/jni/melonres.c -llog
-          ls -la libmelonres.so
-          mkdir -p decoded/lib/arm64-v8a
-          cp libmelonres.so decoded/lib/arm64-v8a/libmelonres.so
-          echo "libmelonres.so installed"
+          CC64="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android22-clang"
+          CC32="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi22-clang"
+          "$CC64" -shared -fPIC -O2 -o libmelonres-arm64.so melon-mod/jni/melonres.c -llog
+          "$CC32" -shared -fPIC -O2 -o libmelonres-v7a.so melon-mod/jni/melonres.c -llog
+          ls -la libmelonres-*.so
+          mkdir -p decoded/lib/arm64-v8a decoded/lib/armeabi-v7a
+          cp libmelonres-arm64.so decoded/lib/arm64-v8a/libmelonres.so
+          cp libmelonres-v7a.so decoded/lib/armeabi-v7a/libmelonres.so
+          echo "libmelonres installed for arm64-v8a and armeabi-v7a (api22)"
 
       - name: Install smali mods
         run: |
@@ -107,18 +108,15 @@ jobs:
       - name: Backup decompiled patched tree
         run: |
           set -euo pipefail
-          # Full patched apktool tree for future work
           zip -r -q melon-decompiled-patched.zip decoded
-          ls -lh melon-decompiled-patched.zip
-          # Lightweight code-only backup (no Unity assets bin)
           zip -r -q melon-decompiled-code.zip decoded \
             -x "decoded/assets/bin/*" \
             -x "decoded/assets/bin/Data/*" \
             -x "decoded/lib/*/*" \
             -x "decoded/unknown/*"
-          # Still keep arm64 libmelonres + libil2cpp in code zip for patch ref
           zip -q melon-decompiled-code.zip \
             decoded/lib/arm64-v8a/libmelonres.so \
+            decoded/lib/armeabi-v7a/libmelonres.so \
             decoded/lib/arm64-v8a/libil2cpp.so || true
           ls -lh melon-decompiled-*.zip
           sha256sum melon-decompiled-patched.zip melon-decompiled-code.zip | tee melon-decompiled.sha256
