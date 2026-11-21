@@ -3,6 +3,8 @@
 .source "MelonResOverlay.java"
 
 .field private static overlay:Landroid/widget/LinearLayout;
+.field private static panel:Landroid/widget/LinearLayout;
+.field private static tab:Landroid/widget/TextView;
 .field private static label:Landroid/widget/TextView;
 .field private static seek:Landroid/widget/SeekBar;
 .field private static prefs:Landroid/content/SharedPreferences;
@@ -12,6 +14,7 @@
 .field private static libLoaded:Z
 .field private static baseW:I
 .field private static baseH:I
+.field private static expanded:Z
 
 .method private constructor <init>()V
     .registers 1
@@ -42,6 +45,34 @@
     move-exception v0
     const/4 v0, 0x0
     sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
+    :done
+    return-void
+.end method
+
+.method public static togglePanel()V
+    .registers 3
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->panel:Landroid/widget/LinearLayout;
+    if-eqz v0, :done
+    sget-boolean v1, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
+    if-eqz v1, :show
+    const/16 v1, 0x8
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+    const/4 v1, 0x0
+    sput-boolean v1, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
+    sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->tab:Landroid/widget/TextView;
+    if-eqz v1, :done
+    const-string v2, "Res"
+    invoke-virtual {v1, v2}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+    goto :done
+    :show
+    const/4 v1, 0x0
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
+    const/4 v1, 0x1
+    sput-boolean v1, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
+    sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->tab:Landroid/widget/TextView;
+    if-eqz v1, :done
+    const-string v2, "Res ▾"
+    invoke-virtual {v1, v2}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
     :done
     return-void
 .end method
@@ -105,7 +136,6 @@
     const/4 v3, 0x0
     invoke-virtual {p0, v3}, Landroid/view/SurfaceView;->setVisibility(I)V
     invoke-virtual {p0}, Landroid/view/SurfaceView;->requestLayout()V
-    invoke-virtual {p0}, Landroid/view/SurfaceView;->invalidate()V
     :try_end_0
     .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
     goto :done
@@ -194,11 +224,6 @@
     invoke-virtual {v1}, Landroid/view/Window;->getDecorView()Landroid/view/View;
     move-result-object v1
     invoke-static {v1}, Lcom/studio27/melonmod/MelonResOverlay;->applyAllSurfaces(Landroid/view/View;)V
-    const v1, 0x1020002
-    invoke-virtual {v0, v1}, Landroid/app/Activity;->findViewById(I)Landroid/view/View;
-    move-result-object v1
-    if-eqz v1, :done
-    invoke-static {v1}, Lcom/studio27/melonmod/MelonResOverlay;->applyAllSurfaces(Landroid/view/View;)V
     :try_end_0
     .catch Ljava/lang/Throwable; {:try_start_0 .. :try_end_0} :catch_0
     goto :done
@@ -221,7 +246,7 @@
 .end method
 
 .method public static install(Landroid/app/Activity;)V
-    .registers 8
+    .registers 9
     if-eqz p0, :done
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
     if-nez v0, :done
@@ -230,6 +255,7 @@
     const/4 v0, 0x0
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->baseW:I
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->baseH:I
+    sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->expanded:Z
 
     invoke-virtual {p0}, Landroid/app/Activity;->getApplicationContext()Landroid/content/Context;
     move-result-object v0
@@ -243,14 +269,6 @@
 
     const/high16 v0, 0x3f800000
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
-    sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
-    if-eqz v1, :skippref
-    invoke-interface {v1}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
-    move-result-object v1
-    const-string v2, "res_scale"
-    invoke-interface {v1, v2, v0}, Landroid/content/SharedPreferences$Editor;->putFloat(Ljava/lang/String;F)Landroid/content/SharedPreferences$Editor;
-    invoke-interface {v1}, Landroid/content/SharedPreferences$Editor;->apply()V
-    :skippref
 
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->refreshBaseFromDisplay()V
@@ -260,39 +278,67 @@
     sput-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
     const/4 v1, 0x1
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setOrientation(I)V
-    const/high16 v1, -0x78000000
-    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setBackgroundColor(I)V
-    const/16 v1, 0x8
-    const/4 v2, 0x4
-    invoke-virtual {v0, v1, v2, v1, v2}, Landroid/widget/LinearLayout;->setPadding(IIII)V
 
+    # Tab button — always visible, small
     new-instance v1, Landroid/widget/TextView;
     invoke-direct {v1, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
-    sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->label:Landroid/widget/TextView;
+    sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->tab:Landroid/widget/TextView;
+    const-string v2, "Res"
+    invoke-virtual {v1, v2}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
     const/4 v2, -0x1
     invoke-virtual {v1, v2}, Landroid/widget/TextView;->setTextColor(I)V
     const/high16 v2, 0x41400000
     invoke-virtual {v1, v2}, Landroid/widget/TextView;->setTextSize(F)V
-    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->updateLabel()V
+    const/high16 v2, -0x78000000
+    invoke-virtual {v1, v2}, Landroid/widget/TextView;->setBackgroundColor(I)V
+    const/16 v2, 0xa
+    const/4 v3, 0x6
+    invoke-virtual {v1, v2, v3, v2, v3}, Landroid/widget/TextView;->setPadding(IIII)V
+    new-instance v2, Lcom/studio27/melonmod/MelonResOverlay$2;
+    invoke-direct {v2}, Lcom/studio27/melonmod/MelonResOverlay$2;-><init>()V
+    invoke-virtual {v1, v2}, Landroid/widget/TextView;->setOnClickListener(Landroid/view/View$OnClickListener;)V
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
 
-    new-instance v1, Landroid/widget/SeekBar;
-    invoke-direct {v1, p0}, Landroid/widget/SeekBar;-><init>(Landroid/content/Context;)V
-    sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->seek:Landroid/widget/SeekBar;
-    const/16 v2, 0x64
-    invoke-virtual {v1, v2}, Landroid/widget/SeekBar;->setMax(I)V
-    const/16 v2, 0x64
-    invoke-virtual {v1, v2}, Landroid/widget/SeekBar;->setProgress(I)V
-    new-instance v2, Lcom/studio27/melonmod/MelonResOverlay$1;
-    invoke-direct {v2}, Lcom/studio27/melonmod/MelonResOverlay$1;-><init>()V
-    invoke-virtual {v1, v2}, Landroid/widget/SeekBar;->setOnSeekBarChangeListener(Landroid/widget/SeekBar$OnSeekBarChangeListener;)V
-    new-instance v2, Landroid/widget/LinearLayout$LayoutParams;
+    # Expandable panel — GONE until tab tapped
+    new-instance v1, Landroid/widget/LinearLayout;
+    invoke-direct {v1, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V
+    sput-object v1, Lcom/studio27/melonmod/MelonResOverlay;->panel:Landroid/widget/LinearLayout;
+    const/4 v2, 0x1
+    invoke-virtual {v1, v2}, Landroid/widget/LinearLayout;->setOrientation(I)V
+    const/high16 v2, -0x78000000
+    invoke-virtual {v1, v2}, Landroid/widget/LinearLayout;->setBackgroundColor(I)V
+    const/16 v2, 0x8
+    const/4 v3, 0x4
+    invoke-virtual {v1, v2, v3, v2, v3}, Landroid/widget/LinearLayout;->setPadding(IIII)V
+    const/16 v2, 0x8
+    invoke-virtual {v1, v2}, Landroid/widget/LinearLayout;->setVisibility(I)V
+
+    new-instance v2, Landroid/widget/TextView;
+    invoke-direct {v2, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
+    sput-object v2, Lcom/studio27/melonmod/MelonResOverlay;->label:Landroid/widget/TextView;
     const/4 v3, -0x1
-    const/4 v4, -0x2
-    invoke-direct {v2, v3, v4}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
-    const/16 v3, 0xc8
-    iput v3, v2, Landroid/widget/LinearLayout$LayoutParams;->width:I
-    invoke-virtual {v0, v1, v2}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V
+    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setTextColor(I)V
+    const/high16 v3, 0x41400000
+    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setTextSize(F)V
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->updateLabel()V
+    invoke-virtual {v1, v2}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
+
+    new-instance v2, Landroid/widget/SeekBar;
+    invoke-direct {v2, p0}, Landroid/widget/SeekBar;-><init>(Landroid/content/Context;)V
+    sput-object v2, Lcom/studio27/melonmod/MelonResOverlay;->seek:Landroid/widget/SeekBar;
+    const/16 v3, 0x64
+    invoke-virtual {v2, v3}, Landroid/widget/SeekBar;->setMax(I)V
+    invoke-virtual {v2, v3}, Landroid/widget/SeekBar;->setProgress(I)V
+    new-instance v3, Lcom/studio27/melonmod/MelonResOverlay$1;
+    invoke-direct {v3}, Lcom/studio27/melonmod/MelonResOverlay$1;-><init>()V
+    invoke-virtual {v2, v3}, Landroid/widget/SeekBar;->setOnSeekBarChangeListener(Landroid/widget/SeekBar$OnSeekBarChangeListener;)V
+    new-instance v3, Landroid/widget/LinearLayout$LayoutParams;
+    const/16 v4, 0xc8
+    const/4 v5, -0x2
+    invoke-direct {v3, v4, v5}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
+    invoke-virtual {v1, v2, v3}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V
+
+    invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
 
     new-instance v1, Landroid/widget/FrameLayout$LayoutParams;
     const/4 v2, -0x2
