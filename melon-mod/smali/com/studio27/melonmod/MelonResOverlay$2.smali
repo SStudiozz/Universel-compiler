@@ -1,7 +1,7 @@
 .class Lcom/studio27/melonmod/MelonResOverlay$2;
 .super Ljava/lang/Object;
 .source "MelonResOverlay.java"
-.implements Ljava/lang/Runnable;
+.implements Landroid/view/View$OnClickListener;
 
 .method constructor <init>()V
     .registers 1
@@ -9,8 +9,8 @@
     return-void
 .end method
 
-.method public run()V
-    .registers 1
-    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->applyNow()V
+.method public onClick(Landroid/view/View;)V
+    .registers 2
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->togglePanel()V
     return-void
 .end method
