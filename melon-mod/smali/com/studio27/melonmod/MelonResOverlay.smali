@@ -7,8 +7,10 @@
 .field private static tab:Landroid/widget/TextView;
 .field private static label:Landroid/widget/TextView;
 .field private static seek:Landroid/widget/SeekBar;
+.field private static fpsBox:Landroid/widget/CheckBox;
 .field private static prefs:Landroid/content/SharedPreferences;
 .field private static scale:F
+.field private static lock60:Z
 .field private static appCtx:Landroid/content/Context;
 .field private static activity:Landroid/app/Activity;
 .field private static libLoaded:Z
@@ -29,7 +31,9 @@
 .method public static native nativeApply(F)V
 .end method
 
-# Called from native SettingsController hooks only — not every frame
+.method public static native nativeSetLock60(Z)V
+.end method
+
 .method public static setSettingsOpen(Z)V
     .registers 4
     sput-boolean p0, Lcom/studio27/melonmod/MelonResOverlay;->settingsOpen:Z
@@ -51,7 +55,6 @@
     if-eqz p0, :hide
     const/4 v1, 0x0
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
-    # Auto-expand slider when settings opens
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->panel:Landroid/widget/LinearLayout;
     if-eqz v0, :done
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
@@ -79,6 +82,8 @@
     const-string v0, "melonres"
     invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->nativeInitLimbs()V
+    sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->lock60:Z
+    invoke-static {v0}, Lcom/studio27/melonmod/MelonResOverlay;->nativeSetLock60(Z)V
     const/4 v0, 0x1
     sput-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
     :try_end_0
@@ -290,8 +295,27 @@
     return-void
 .end method
 
+.method public static setLock60(Z)V
+    .registers 3
+    sput-boolean p0, Lcom/studio27/melonmod/MelonResOverlay;->lock60:Z
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
+    sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
+    if-eqz v0, :pref
+    invoke-static {p0}, Lcom/studio27/melonmod/MelonResOverlay;->nativeSetLock60(Z)V
+    :pref
+    sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
+    if-eqz v0, :done
+    invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+    move-result-object v0
+    const-string v1, "lock_60_fps"
+    invoke-interface {v0, v1, p0}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+    invoke-interface {v0}, Landroid/content/SharedPreferences$Editor;->apply()V
+    :done
+    return-void
+.end method
+
 .method public static install(Landroid/app/Activity;)V
-    .registers 9
+    .registers 10
     if-eqz p0, :done
     sget-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
     if-nez v0, :done
@@ -313,8 +337,14 @@
     move-result-object v0
     sput-object v0, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
 
-    const/high16 v0, 0x3f800000
-    sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
+    const/high16 v1, 0x3f800000
+    sput v1, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
+
+    const-string v1, "lock_60_fps"
+    const/4 v2, 0x0
+    invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+    move-result v1
+    sput-boolean v1, Lcom/studio27/melonmod/MelonResOverlay;->lock60:Z
 
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->refreshBaseFromDisplay()V
@@ -324,7 +354,6 @@
     sput-object v0, Lcom/studio27/melonmod/MelonResOverlay;->overlay:Landroid/widget/LinearLayout;
     const/4 v1, 0x1
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setOrientation(I)V
-    # Hidden until SettingsController.Start / InitializeUI
     const/16 v1, 0x8
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->setVisibility(I)V
 
@@ -384,6 +413,21 @@
     const/4 v5, -0x2
     invoke-direct {v3, v4, v5}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
     invoke-virtual {v1, v2, v3}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V
+
+    # 60 FPS checkbox under Res
+    new-instance v2, Landroid/widget/CheckBox;
+    invoke-direct {v2, p0}, Landroid/widget/CheckBox;-><init>(Landroid/content/Context;)V
+    sput-object v2, Lcom/studio27/melonmod/MelonResOverlay;->fpsBox:Landroid/widget/CheckBox;
+    const-string v3, "Lock 60 FPS"
+    invoke-virtual {v2, v3}, Landroid/widget/CheckBox;->setText(Ljava/lang/CharSequence;)V
+    const/4 v3, -0x1
+    invoke-virtual {v2, v3}, Landroid/widget/CheckBox;->setTextColor(I)V
+    sget-boolean v3, Lcom/studio27/melonmod/MelonResOverlay;->lock60:Z
+    invoke-virtual {v2, v3}, Landroid/widget/CheckBox;->setChecked(Z)V
+    new-instance v3, Lcom/studio27/melonmod/MelonResOverlay$4;
+    invoke-direct {v3}, Lcom/studio27/melonmod/MelonResOverlay$4;-><init>()V
+    invoke-virtual {v2, v3}, Landroid/widget/CheckBox;->setOnCheckedChangeListener(Landroid/widget/CompoundButton$OnCheckedChangeListener;)V
+    invoke-virtual {v1, v2}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
 
     invoke-virtual {v0, v1}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V
 
