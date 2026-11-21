@@ -22,6 +22,9 @@
 .method public static native nativeInitLimbs()V
 .end method
 
+.method public static native nativeApply(F)V
+.end method
+
 .method public static ensureLib()V
     .registers 1
     sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
@@ -84,7 +87,6 @@
     return-void
 .end method
 
-# Hard unlock: set full fixed size, setSizeFromLayout, visibility bounce (recreates buffer)
 .method public static unlockSurface(Landroid/view/SurfaceView;)V
     .registers 5
     if-eqz p0, :done
@@ -98,7 +100,6 @@
     invoke-interface {v0, v1, v2}, Landroid/view/SurfaceHolder;->setFixedSize(II)V
     :nolayout
     invoke-interface {v0}, Landroid/view/SurfaceHolder;->setSizeFromLayout()V
-    # Force surface destroy/create — only reliable unlock on many devices
     const/4 v3, 0x4
     invoke-virtual {p0, v3}, Landroid/view/SurfaceView;->setVisibility(I)V
     const/4 v3, 0x0
@@ -208,7 +209,13 @@
 .end method
 
 .method public static applyNow()V
-    .registers 0
+    .registers 1
+    invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
+    sget-boolean v0, Lcom/studio27/melonmod/MelonResOverlay;->libLoaded:Z
+    if-eqz v0, :surf
+    sget v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
+    invoke-static {v0}, Lcom/studio27/melonmod/MelonResOverlay;->nativeApply(F)V
+    :surf
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->applySurfaceScale()V
     return-void
 .end method
@@ -234,7 +241,6 @@
     move-result-object v0
     sput-object v0, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
 
-    # Always start at 100% — never auto-apply low res on boot
     const/high16 v0, 0x3f800000
     sput v0, Lcom/studio27/melonmod/MelonResOverlay;->scale:F
     sget-object v1, Lcom/studio27/melonmod/MelonResOverlay;->prefs:Landroid/content/SharedPreferences;
@@ -247,7 +253,6 @@
     :skippref
 
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->ensureLib()V
-    # Capture display size once, do NOT touch surface on install
     invoke-static {}, Lcom/studio27/melonmod/MelonResOverlay;->refreshBaseFromDisplay()V
 
     new-instance v0, Landroid/widget/LinearLayout;
